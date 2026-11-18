@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# engine/install.sh — end-to-end agent-farm setup on Ubuntu (Hetzner-friendly).
+# engine/install.sh — end-to-end software-factory setup on Ubuntu (Hetzner-friendly).
 # Idempotent: safe to re-run after a plugin update.
 #
 # Installs: kanban-md (latest GitHub release), board with farm columns,
@@ -328,9 +328,9 @@ HAVE_SUPERVISION=0
 if [[ "$(_install_os)" == "macos" ]]; then
   say "rendering launchd units → $UNIT_DIR"
   render_units
-  say "launchd plists bake an absolute plugin path — re-run install.sh after any agent-farm plugin update (the old plugin dir is garbage-collected ~7 days later)."
+  say "launchd plists bake an absolute plugin path — re-run install.sh after any software-factory plugin update (the old plugin dir is garbage-collected ~7 days later)."
 
-  say "guard hook is provided by the agent-farm plugin (hooks.json) — ensure the plugin is enabled in $REPO_DIR/.claude/settings.json (enabledPlugins)."
+  say "guard hook is provided by the software-factory plugin (hooks.json) — ensure the plugin is enabled in $REPO_DIR/.claude/settings.json (enabledPlugins)."
 
   # daemon-reload/enable-linger have no launchd equivalent needed here: a
   # fresh 'launchctl bootstrap' below picks up the plist immediately, and
@@ -355,9 +355,9 @@ elif (( HAVE_SYSTEMD )); then
   for u in "$PLUGIN_ROOT"/engine/systemd/*; do
     sed -e "s|@REPO_DIR@|$REPO_DIR|g" -e "s|@FARM_BIN@|$PLUGIN_ROOT/bin|g" "$u" > "$UNIT_DIR/$(basename "$u")"
   done
-  say "systemd units bake an absolute plugin path — re-run install.sh after any agent-farm plugin update (the old plugin dir is garbage-collected ~7 days later)."
+  say "systemd units bake an absolute plugin path — re-run install.sh after any software-factory plugin update (the old plugin dir is garbage-collected ~7 days later)."
 
-  say "guard hook is provided by the agent-farm plugin (hooks.json) — ensure the plugin is enabled in $REPO_DIR/.claude/settings.json (enabledPlugins)."
+  say "guard hook is provided by the software-factory plugin (hooks.json) — ensure the plugin is enabled in $REPO_DIR/.claude/settings.json (enabledPlugins)."
 
   # Without claude, dirname "$(command -v claude)" would silently bake "." into
   # every unit's PATH — write the drop-ins from what exists and let the
@@ -382,7 +382,7 @@ else
   # Reached only on a NON-systemd LINUX (macOS is handled by the launchd branch
   # above). No systemd here and launchd is macOS-only, so fall back to manual/cron.
   say "SKIPPING supervision install — no 'systemctl' on this non-systemd Linux (macOS uses launchd, handled separately)."
-  say "guard hook is provided by the agent-farm plugin (hooks.json) — ensure the plugin is enabled in $REPO_DIR/.claude/settings.json (enabledPlugins)."
+  say "guard hook is provided by the software-factory plugin (hooks.json) — ensure the plugin is enabled in $REPO_DIR/.claude/settings.json (enabledPlugins)."
   say "No unattended supervision (auto-restart timers for runner/scout/janitor) without systemd. Run the farm manually instead:"
   say "  $PLUGIN_ROOT/bin/farm-runner.sh implementer-1     # foreground, one worker (repeat per instance/role)"
   say "  $PLUGIN_ROOT/bin/farm-janitor.sh                  # run periodically, e.g. via cron: */15 * * * * $PLUGIN_ROOT/bin/farm-janitor.sh"

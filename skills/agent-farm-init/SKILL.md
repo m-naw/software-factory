@@ -1,6 +1,6 @@
 ---
 name: agent-farm-init
-description: Scaffold agent-farm config + governance into the current repo. Run once per project after installing the agent-farm plugin.
+description: Scaffold farm config + governance into the current repo. Run once per project after installing the software-factory plugin.
 ---
 
 # agent-farm-init
@@ -50,7 +50,7 @@ consuming repo's `CLAUDE.md`.
 1. Edit `.agent-farm/protected-paths.txt` — list THIS project's safety-critical paths (auth, payments, migrations, data-deletion, …). These gate auto-merge + force higher-tier review.
 2. Set `FARM_VERIFY_CMD` / `FARM_TEST_CMD` in `.agent-farm/farm.env` for your stack (default: `npm run check` / `npm run test`).
 3. Optionally fill `.agent-farm/prompts/{scout,implementer,qa}.md` with your domain invariants (copy from the plugin's `templates/project-prompts/` as a starting point).
-4. Ensure `agent-farm@agent-farm-tools` is in `.claude/settings.json` `enabledPlugins`.
+4. Ensure `software-factory@software-factory` is in `.claude/settings.json` `enabledPlugins`.
 5. For full workflow depth, install the `superpowers` and `frontend-design` plugins (the
    farm's prompts use them if present; `FARM.md`'s baseline rules bind regardless).
 

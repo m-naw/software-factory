@@ -123,7 +123,7 @@ already reviews those). Hunt in TWO complementary modes — use both:
   or an exact command + observed wrong output. A defect you cannot trigger from
   a real caller (an "unsafe" branch that is unreachable, or an input no caller
   produces) is DROPPED, not filed. "This looks wrong" with no repro is a rumor.
-- **File via the `agent-farm:bug-new` discipline:** use `TEMPLATES_DIR/bug-template.md`,
+- **File via the `software-factory:bug-new` discipline:** use `TEMPLATES_DIR/bug-template.md`,
   fill EVERY section (Symptom, Reproduction, Expected vs Actual, Evidence,
   Suspected cause, Acceptance Criteria, Verification). The first AC MUST be
   "a failing test reproducing the bug exists FIRST, then passes after the fix."

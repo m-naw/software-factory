@@ -161,6 +161,13 @@ t "workflow edit blocked"       2 '{"tool_name":"Write","tool_input":{"file_path
 t "guard self-edit blocked"     2 '{"tool_name":"Edit","tool_input":{"file_path":"/r/agent-farm/hooks/guard-bash.sh"}}'
 t ".agent-farm config self-edit blocked" 2 '{"tool_name":"Edit","tool_input":{"file_path":"/r/.agent-farm/protected-paths.txt"}}'
 t "normal write allowed"        0 '{"tool_name":"Write","tool_input":{"file_path":"/r/src/app/page.tsx"}}'
+# The plugin is named software-factory: its own files must stay protected under that name too.
+t "software-factory plugin bin Write blocked" 2 '{"tool_name":"Write","tool_input":{"file_path":"/r/software-factory/bin/farm-lib.sh"}}'
+t "software-factory plugin launchd Edit blocked" 2 '{"tool_name":"Edit","tool_input":{"file_path":"/r/software-factory/launchd/x.plist"}}'
+t_reason "software-factory plugin Write denial names the reason" 2 "FARM_AGENT=1" '{"tool_name":"Write","tool_input":{"file_path":"/r/software-factory/systemd/claude-farm@.service"}}' 'protected path \(/r/software-factory/systemd/'
+t "software-factory plugin rm via bash blocked" 2 "$(bash_cmd 'rm /p/software-factory/bin/farm-lib.sh')"
+t "software-factory plugin sed via bash blocked" 2 "$(bash_cmd 'sed -i s/x/y/ /p/software-factory/hooks/hooks.sh')"
+t_reason "software-factory plugin bash denial names the reason" 2 "FARM_AGENT=1" "$(bash_cmd 'mv /p/software-factory/systemd/a /tmp/a')" 'guard/CI/farm configuration is read-only for agents\. If a task'
 
 # ------------------------------------------------------- scoping (FARM_AGENT) -
 # The guard governs farm agents only. Non-farm sessions (operator/dev and their

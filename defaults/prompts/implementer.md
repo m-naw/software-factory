@@ -271,7 +271,7 @@ If your claimed task carries the `decompose` tag, this is NOT a code task: it is
 a bounded child-creation task that turns a MERGED epic plan into phase tickets.
 QA spawns it when an epic's plan has more than 3 phases, so the generated
 child-set gets independent review before any phase is claimable. Load
-`agent-farm:task-authoring` to write each child to standard.
+`software-factory:task-authoring` to write each child to standard.
 
 - **Read the referenced merged plan.** The plan path is in this task's body
   (the `Merged plan:` line QA recorded). Read it at `main` HEAD and enumerate its
@@ -279,7 +279,7 @@ child-set gets independent review before any phase is claimable. Load
 - **Create the phase children — in `backlog`, NOT `ready`.** They stay in
   `backlog` until an independent reviewer/QA validates the whole child-set against
   the merged plan; only then are they promoted to `ready`. For each phase create
-  one child authored to the `agent-farm:task-authoring` standard (Why / Scope IN-OUT /
+  one child authored to the `software-factory:task-authoring` standard (Why / Scope IN-OUT /
   testable AC / Verification / Context) DRAWN FROM that phase's section of the
   merged plan, PLUS a reference line to the merged plan path (the Stage-3 drift
   guard relies on it):

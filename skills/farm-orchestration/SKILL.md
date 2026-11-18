@@ -7,7 +7,7 @@ description: >
   session whose job is to RUN the farm (not to implement a single ticket) — the
   daily loop, "is the farm healthy?", "what are the agents doing?", filing
   tasks/bugs, handling escalated, or merging. Encodes the model-tier policy so
-  a lower-tier session can run the farm safely. Invocable as /agent-farm:farm-orchestration.
+  a lower-tier session can run the farm safely. Invocable as /software-factory:farm-orchestration.
 allowed-tools:
   - Bash
   - Read
@@ -39,7 +39,7 @@ orchestrator session to **Sonnet**.
 | Situation                                                                                                                                           | Tier                                                                                                                                                                                                                                                                                        |
 | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Health checks, status, re-arming monitors, disk/worktree hygiene, reading logs, merging an operator-approved green PR                               | **Sonnet** (or delegate mechanical runs to Haiku subagents)                                                                                                                                                                                                                                 |
-| Filing a **routine** task/bug (`/agent-farm:task-new`, `/agent-farm:bug-new`)                                                                                             | **Sonnet** — quality comes from _investigation_, not tier. Follow the skill: grep the code, cite real `file:line`, rule out the obvious cause, write testable ACs. A Sonnet that investigates beats an Opus that skips it.                                                                  |
+| Filing a **routine** task/bug (`/software-factory:task-new`, `/software-factory:bug-new`)                                                                                             | **Sonnet** — quality comes from _investigation_, not tier. Follow the skill: grep the code, cite real `file:line`, rule out the obvious cause, write testable ACs. A Sonnet that investigates beats an Opus that skips it.                                                                  |
 | Filing a **safety-critical** task/bug — a safety-critical or irreversible surface (auth/session, payments/billing, data deletion, credentials/secrets, and whatever your project marks safety-critical) | **Opus** — tier up the session OR route the investigation to an Opus subagent. A misframe here causes real user harm (e.g. a domain-accuracy-critical fact stated with the wrong specifics). These tickets MUST cite an authoritative source for domain-accuracy-critical facts, or escalate to `escalated` — never invent. |
 | `escalated` triage where the verdict **changes a decision** (real escalation vs bad ticket vs model-outage artifact)                              | **Opus** judgment, or escalate to the human                                                                                                                                                                                                                                                 |
 | Designing/altering the farm itself (prompts, lifecycle, CI, CODEOWNERS)                                                                             | **Opus** — author it, get CI green, then **merge it yourself**. The orchestrator is a non-farm session and is exempt from the farm-worker never-merge rule (operator decision 2026-06-15); only the guard wiring `.claude/settings*` stays operator-owned.                                  |
@@ -77,7 +77,7 @@ data deletion, credentials/secrets, or whatever your project marks safety-critic
 | Column        | Owner / meaning                                                                                                 |
 | ------------- | --------------------------------------------------------------------------------------------------------------- |
 | `backlog`     | Raw/scout work. **Human-gated to `ready`** — implementers do NOT auto-drain (`IMPLEMENTER_BACKLOG_FALLBACK=0`). |
-| `ready`       | Curated queue. `/agent-farm:task-new` + `/agent-farm:bug-new` (human-initiated) land here.                                            |
+| `ready`       | Curated queue. `/software-factory:task-new` + `/software-factory:bug-new` (human-initiated) land here.                                            |
 | `doing`       | One implementer, claimed. Implementers never return after handoff.                                              |
 | `review`      | QA-owned: review, CI, in-place fixes, squash-merge.                                                             |
 | `shipped`     | **Merged to `main`.** Transient — the janitor archives it.                                                      |
@@ -93,7 +93,7 @@ PRs → `shipped` and archives them; the **scout** (timer) files findings to
 1. **Health check.** `farmctl status` (board + per-agent live activity). Confirm
    the configured workers (default **2 implementers + 1 QA**; this farm may be
    scaled higher) + the 2 timers are `active`, and no breaker is tripped.
-2. **File work** the operator asks for via `/agent-farm:task-new` / `/agent-farm:bug-new` (see tier
+2. **File work** the operator asks for via `/software-factory:task-new` / `/software-factory:bug-new` (see tier
    table). Human-initiated → `ready`.
 3. **Promote** `backlog → ready` when the operator curates (human gate).
 4. **Watch it flow.** Tasks move `ready → doing → review`. A merged PR's task
@@ -146,7 +146,7 @@ the heartbeat quiet.
 
 ## Filing work — delegate to the dedicated skills
 
-Always file through `/agent-farm:task-new` (features/chores) or `/agent-farm:bug-new` (bugs). They
+Always file through `/software-factory:task-new` (features/chores) or `/software-factory:bug-new` (bugs). They
 enforce the template (`${CLAUDE_PLUGIN_ROOT}/templates/{task,bug}-template.md`): Why, Scope
 IN/OUT, testable ACs, Verification commands, real `file:line` Context pointers,
 and (bugs) Evidence. A bug without evidence is a rumor — reproduce or cite, or
@@ -180,7 +180,7 @@ authoritative source.
 
 > Tooling note: `Edit`/`Write` are granted for orchestration artifacts only
 > (monitor scripts, this skill) — not for implementing tickets. You are NOT an
-> implementer; feature/bugfix code goes through `/agent-farm:task-new` / `/agent-farm:bug-new` → farm.
+> implementer; feature/bugfix code goes through `/software-factory:task-new` / `/software-factory:bug-new` → farm.
 
 ## Report to the operator — status, what needs them, and your advice
 

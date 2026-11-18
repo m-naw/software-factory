@@ -6,7 +6,7 @@ description: >
   failing-test-first Acceptance Criterion. Use whenever the user reports
   something broken, says "file a bug", "log a defect", "this is broken",
   or when an agent discovers a reproducible defect. Invocable as
-  /agent-farm:bug-new <what is broken>.
+  /software-factory:bug-new <what is broken>.
 allowed-tools:
   - Bash(kanban-md *)
   - Bash(kbmd *)

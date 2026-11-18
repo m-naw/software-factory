@@ -6,7 +6,7 @@
 
 ## Goal
 
-Make the agent-farm plugin fully platform-agnostic across Linux and macOS. A user
+Make the agent-farm (now software-factory) plugin fully platform-agnostic across Linux and macOS. A user
 installing and running on macOS must get the same behavior as on Linux, out of the box,
 with **no degradation** — same auto-restart, same timers, same boot/logout persistence,
 same security enforcement. The platform is detected automatically and the correct

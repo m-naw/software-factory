@@ -75,11 +75,11 @@ Coordination happens on a file-based kanban board via `kanban-md`. Board columns
 
 **Farm skills** (namespaced — use them for board work):
 
-- `agent-farm:task-new` — file a new task ticket.
-- `agent-farm:bug-new` — file a new bug ticket.
-- `agent-farm:task-authoring` — write a ticket to the standard structure above.
-- `agent-farm:farm-orchestration` — run the farm loop.
-- `agent-farm:requesting-pr-revision` — route a PR back to an implementer for rework.
+- `software-factory:task-new` — file a new task ticket.
+- `software-factory:bug-new` — file a new bug ticket.
+- `software-factory:task-authoring` — write a ticket to the standard structure above.
+- `software-factory:farm-orchestration` — run the farm loop.
+- `software-factory:requesting-pr-revision` — route a PR back to an implementer for rework.
 
 Operate the farm with `farmctl start|stop|scale|status|pause|dash`.
 
