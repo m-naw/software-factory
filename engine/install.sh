@@ -10,6 +10,8 @@
 # Usage:
 #   engine/install.sh                       # target = CLAUDE_PROJECT_DIR or CWD git root
 #   engine/install.sh --init-project <repo> # scaffold + set up the named target repo
+#   engine/install.sh --init-project <repo> --conductor-only [--verify-cmd '<cmd>']
+#                                           # only farm.env + .gitignore entries, for farmctl conduct
 
 set -euo pipefail
 
@@ -19,10 +21,26 @@ PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # check, no board, no launchctl/systemctl calls. Lets the render step be
 # tested (macOS launchd plists in particular) without a live board or system
 # supervisor.
+# --conductor-only [--verify-cmd '<cmd>'] writes only what `farmctl conduct` needs (below).
 REPO_ARG=""
 RENDER_UNITS_ONLY=0
-if [[ "${1:-}" == "--init-project" ]]; then REPO_ARG="${2:-}"; fi
-if [[ "${1:-}" == "--render-units-only" ]]; then RENDER_UNITS_ONLY=1; fi
+CONDUCTOR_ONLY=0
+VERIFY_CMD=""
+VERIFY_SET=0
+while (( $# )); do
+  case "$1" in
+    --init-project) REPO_ARG="${2:-}"; (( $# > 1 )) && shift ;;
+    --render-units-only) RENDER_UNITS_ONLY=1 ;;
+    --conductor-only) CONDUCTOR_ONLY=1 ;;
+    --verify-cmd) (( $# > 1 )) || { echo "--verify-cmd needs a value" >&2; exit 2; }
+      VERIFY_CMD="$2"; VERIFY_SET=1; shift ;;
+    *) echo "unknown argument: $1 (use --init-project <repo> [--conductor-only [--verify-cmd '<cmd>']] or --render-units-only)" >&2; exit 2 ;;
+  esac
+  shift
+done
+if (( VERIFY_SET && ! CONDUCTOR_ONLY )); then
+  echo "--verify-cmd works with --conductor-only only; for the full init edit .agent-farm/farm.env" >&2; exit 2
+fi
 REPO_DIR="${REPO_ARG:-${CLAUDE_PROJECT_DIR:-$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || pwd)}}"
 BOARD_DIR="$REPO_DIR/kanban"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
@@ -93,6 +111,60 @@ render_units() {
 if (( RENDER_UNITS_ONLY )); then
   render_units
   say "rendered units → $UNIT_DIR (--render-units-only: skipping deps/board/supervision — exiting)"
+  exit 0
+fi
+
+# <value> → a farm.env right-hand side that bash (source) and the conductor's
+# conduct_env_value (data, strips one pair of outer quotes, no unescaping) both read
+# back unchanged; rc 1 when no quoting does.
+_env_quote() {
+  case "$1" in "" | *$'\n'* | *$'\r'*) return 1 ;; esac
+  case "$1" in *"'"*) ;; *) printf "'%s'" "$1"; return 0 ;; esac
+  case "$1" in *'"'* | *'$'* | *'`'* | *'\'*) return 1 ;; esac
+  printf '"%s"' "$1"
+}
+
+# --conductor-only: the conductor reads only .agent-farm/farm.env (FARM_VERIFY_CMD, on the
+# default branch) and works in .farm-worktrees/. No kanban-md, board, units or governance.
+# No protected-paths.txt: without one the conductor's merge gate uses the plugin default,
+# which the full init's seeded template equals; a project adds its own file when it needs one.
+if (( CONDUCTOR_ONLY )); then
+  git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || fail "--conductor-only: $REPO_DIR is not a git work tree"
+  PLACEHOLDER=0
+  if (( ! VERIFY_SET )); then VERIFY_CMD="npm run check"; PLACEHOLDER=1; fi  # the full init's default
+  Q="$(_env_quote "$VERIFY_CMD")" \
+    || fail "--conductor-only: the verify command must be non-empty, one line, and either free of single quotes or free of \" \$ \` \\ — wrap it in a script (e.g. ./verify.sh) instead"
+  CREATED=()
+  mkdir -p "$REPO_DIR/.agent-farm"
+  if [[ -f "$REPO_DIR/.agent-farm/farm.env" ]]; then
+    say "kept existing .agent-farm/farm.env (not overwritten)"
+    PLACEHOLDER=0
+  else
+    printf '%s\n' "# software-factory: farmctl conduct reads this from the default branch as data (not sourced)." \
+      "# FARM_VERIFY_CMD must pass from a clean clone of the default branch." \
+      "FARM_VERIFY_CMD=$Q" > "$REPO_DIR/.agent-farm/farm.env"
+    CREATED+=(".agent-farm/farm.env (FARM_VERIFY_CMD=$Q)")
+  fi
+  GI="$REPO_DIR/.gitignore"
+  for entry in ".farm-worktrees/" ".agent-farm/state/"; do
+    grep -qxF "$entry" "$GI" 2>/dev/null && continue
+    [[ -s "$GI" && -n "$(tail -c 1 "$GI")" ]] && printf '\n' >> "$GI"
+    printf '%s\n' "$entry" >> "$GI"
+    CREATED+=(".gitignore entry $entry")
+  done
+  if ((${#CREATED[@]})); then
+    for c in "${CREATED[@]}"; do say "created: $c"; done
+  else
+    say "nothing to create — the conductor setup is already in place"
+  fi
+  (( PLACEHOLDER )) && say "WARNING: FARM_VERIFY_CMD is the placeholder 'npm run check' — replace it in .agent-farm/farm.env with your project's test command (or re-run with --verify-cmd after deleting the file)."
+  say "next steps:
+  1. Commit .agent-farm/farm.env and .gitignore through a pull request (FARM_VERIFY_CMD must pass from a clean clone).
+  2. On GitHub, give the default branch a ruleset that requires pull requests and a required status check that also runs on docs-only changes, with no bypass for you (README: Conducting a plan, Preconditions).
+  3. Set FARM_NOTIFY_CMD in your own environment, never in the repository (README: Notifications).
+  4. Write a spec under docs/superpowers/specs/ and a plan under docs/superpowers/plans/ with a **Spec:** link, then run: $PLUGIN_ROOT/bin/farmctl conduct lint <plan>
+  Optional: add .agent-farm/protected-paths.txt for your project's safety-critical paths (the plugin default applies without it)."
   exit 0
 fi
 

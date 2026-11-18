@@ -478,6 +478,23 @@ got="$(fc "$A" lint docs/superpowers/plans/wtspec.md)"
 case "$got" in *"spec-missing"*docs/superpowers/specs/wt-spec.md*"rc=1") ok ;; *) nope "lint: a spec only in the work tree -> exit 1, spec-missing naming it: got=[$got]" ;; esac
 rm -f "$A/docs/superpowers/specs/wt-spec.md"
 
+# [smoke] install.sh --conductor-only, then a plan with its spec: lint is clean (no
+# protected-paths.txt, so the plugin default covers the plan) and the conductor reads
+# FARM_VERIFY_CMD from farm.env on origin/main.
+CO="$(mktemp -d "$TROOT/co.XXXXXX")"
+git init -q --bare "$CO/origin.git" && git -C "$CO/origin.git" symbolic-ref HEAD refs/heads/main
+git init -q "$CO/w" && git -C "$CO/w" checkout -q -b main
+"$BASH" "$FARM/engine/install.sh" --init-project "$CO/w" --conductor-only --verify-cmd './verify.sh --all' </dev/null >/dev/null 2>&1
+expect_eq "$?" 0 "conductor-only setup: install exits 0"
+mkdir -p "$CO/w/docs/superpowers/plans" "$CO/w/docs/superpowers/specs"
+cp "$FARM/contract/fixtures/plan.md" "$CO/w/$PP"; printf '# spec\n' > "$CO/w/docs/superpowers/specs/p-spec.md"
+gitq -C "$CO/w" add -A && gitq -C "$CO/w" commit -qm init
+git -C "$CO/w" remote add origin "$CO/origin.git" && git -C "$CO/w" push -q origin main 2>/dev/null
+got="$(fc "$CO/w" lint "$PP")"
+case "$got" in *"$PP#M1"*"rc=0") ok ;; *) nope "conductor-only setup: lint exit 0: got=[$got]" ;; esac
+expect_eq "$(git -C "$CO/w" show origin/main:.agent-farm/farm.env | run_fn conduct_env_value FARM_VERIFY_CMD)" "./verify.sh --all"$'\n'"rc=0" \
+  "conductor-only setup: verify command read from origin/main"
+
 if is_full; then
   cp "$R/$PP" "$R/docs/superpowers/plans/local.md"
   got="$(fc "$R" lint docs/superpowers/plans/local.md)"

@@ -1379,6 +1379,68 @@ else nope "install.sh without systemctl must not write any systemd unit files"; 
 
 rm -rf "$NS_MIRROR" "$NS_STUB" "$NS_REPO" "$NS_HOME" "$NS_OUT"
 
+# --- install.sh --conductor-only: only what `farmctl conduct` needs ----------
+# No kanban-md, no board, no units, no CLAUDE.md edit. Stubs for every board-farm
+# tool record any call; the record must stay empty.
+CO_TMP="$(mktemp -d "${TMPDIR:-/tmp}/farmco.XXXXXX")"
+mkdir -p "$CO_TMP/stub" "$CO_TMP/home" "$CO_TMP/units"
+for b in kanban-md kbmd curl systemctl launchctl loginctl tmux; do
+  printf '#!/usr/bin/env bash\necho "%s $*" >> "%s/calls"\nexit 0\n' "$b" "$CO_TMP" > "$CO_TMP/stub/$b"
+  chmod +x "$CO_TMP/stub/$b"
+done
+: > "$CO_TMP/calls"
+co_repo() { # → a fresh git work tree with a CLAUDE.md
+  local d; d="$(mktemp -d "$CO_TMP/repo.XXXXXX")"
+  git init -q "$d" && printf '# project rules\n' > "$d/CLAUDE.md"; printf '%s\n' "$d"
+}
+co_install() { # <repo> [args...] → stdout+stderr; rc in CO_RC
+  local r="$1"; shift
+  CO_OUT="$(HOME="$CO_TMP/home" UNIT_DIR="$CO_TMP/units" PATH="$CO_TMP/stub:$PATH" \
+    bash "$FARM/engine/install.sh" --init-project "$r" --conductor-only "$@" </dev/null 2>&1)"; CO_RC=$?
+}
+co_verify() { # <repo> → FARM_VERIFY_CMD as the conductor parses it
+  ( source "$FARM/bin/farm-conduct-lib.sh"; conduct_env_value FARM_VERIFY_CMD < "$1/.agent-farm/farm.env" )
+}
+co_tree() { (cd "$1" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort | while IFS= read -r f; do cksum "$f"; done); }
+CO_R="$(co_repo)"
+co_install "$CO_R" --verify-cmd 'make check && echo "done"'
+[[ "$CO_RC" == 0 ]] && ok || { nope "conductor-only: install exits 0 (rc=$CO_RC)"; printf '%s\n' "$CO_OUT" | sed 's/^/  | /'; }
+[[ "$(co_verify "$CO_R")" == 'make check && echo "done"' ]] && ok \
+  || nope "conductor-only: conduct_env_value reads back the verify command (got: $(co_verify "$CO_R"))"
+[[ "$(grep -cxF '.farm-worktrees/' "$CO_R/.gitignore" 2>/dev/null)" == 1 && "$(grep -cxF '.agent-farm/state/' "$CO_R/.gitignore" 2>/dev/null)" == 1 ]] \
+  && ok || nope "conductor-only: .gitignore holds .farm-worktrees/ and .agent-farm/state/ once each"
+grep -qxF 'kanban/' "$CO_R/.gitignore" 2>/dev/null && nope "conductor-only: no kanban/ .gitignore entry" || ok
+[[ ! -e "$CO_R/kanban" && ! -e "$CO_R/.agent-farm/FARM.md" && ! -e "$CO_R/.agent-farm/prompts" && ! -e "$CO_R/.agent-farm/protected-paths.txt" ]] \
+  && ok || nope "conductor-only: no board, no FARM.md, no prompts, no protected-paths.txt"
+[[ -z "$(ls -A "$CO_TMP/units" 2>/dev/null)" && ! -e "$CO_TMP/home/.config/systemd" && ! -e "$CO_TMP/home/Library" && ! -e "$CO_TMP/home/.local/bin" ]] \
+  && ok || nope "conductor-only: no unit files and no binaries installed"
+[[ ! -s "$CO_TMP/calls" ]] && ok || nope "conductor-only: no kanban-md/curl/systemctl/launchctl/tmux call ($(tr '\n' ';' < "$CO_TMP/calls"))"
+[[ "$(cat "$CO_R/CLAUDE.md")" == '# project rules' ]] && ok || nope "conductor-only: CLAUDE.md untouched"
+printf '%s\n' "$CO_OUT" | grep -q 'farmctl conduct lint' && printf '%s\n' "$CO_OUT" | grep -q 'FARM_NOTIFY_CMD' \
+  && ok || nope "conductor-only: prints the next steps (FARM_NOTIFY_CMD, farmctl conduct lint)"
+CO_T1="$(co_tree "$CO_R")"
+co_install "$CO_R" --verify-cmd 'make check && echo "done"'
+[[ "$CO_RC" == 0 && "$(co_tree "$CO_R")" == "$CO_T1" ]] && ok || nope "conductor-only: a second run changes nothing"
+co_install "$CO_R" --verify-cmd 'other cmd'
+[[ "$CO_RC" == 0 && "$(co_verify "$CO_R")" == 'make check && echo "done"' ]] && ok \
+  || nope "conductor-only: an existing farm.env is not overwritten"
+# Without --verify-cmd: the full init's placeholder, flagged as one.
+CO_R="$(co_repo)"; co_install "$CO_R"
+[[ "$CO_RC" == 0 && "$(co_verify "$CO_R")" == 'npm run check' ]] && printf '%s\n' "$CO_OUT" | grep -qi 'placeholder' \
+  && ok || nope "conductor-only: no --verify-cmd seeds the npm run check placeholder and says so"
+# A single quote is stored double-quoted; a value no quoting keeps intact is refused.
+CO_R="$(co_repo)"; co_install "$CO_R" --verify-cmd "pytest -k 'not slow'"
+[[ "$CO_RC" == 0 && "$(co_verify "$CO_R")" == "pytest -k 'not slow'" ]] && ok || nope "conductor-only: a single-quoted part survives the round trip"
+( set -a; source "$CO_R/.agent-farm/farm.env"; [[ "$FARM_VERIFY_CMD" == "pytest -k 'not slow'" ]] ) && ok \
+  || nope "conductor-only: farm.env sourced by bash gives the same value"
+CO_R="$(co_repo)"; co_install "$CO_R" --verify-cmd "echo 'a' \$HOME"
+[[ "$CO_RC" != 0 && ! -e "$CO_R/.agent-farm/farm.env" ]] && ok || nope "conductor-only: an unquotable verify command is refused, nothing written"
+CO_R="$(co_repo)"; co_install "$CO_R" --verify-cmd ''
+[[ "$CO_RC" != 0 && ! -e "$CO_R/.agent-farm/farm.env" ]] && ok || nope "conductor-only: an empty verify command is refused"
+CO_N="$(mktemp -d "$CO_TMP/notgit.XXXXXX")"; co_install "$CO_N"
+[[ "$CO_RC" != 0 && ! -e "$CO_N/.agent-farm" ]] && ok || nope "conductor-only: a directory that is not a git work tree is refused"
+rm -rf "$CO_TMP"
+
 # --- install renders launchd plists on macOS ------------------------------
 # --render-units-only forces the render-only path (no deps/board/launchctl
 # calls — see install.sh) with FARM_OS_OVERRIDE=macos to exercise the launchd

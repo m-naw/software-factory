@@ -5,7 +5,23 @@ description: Scaffold farm config + governance into the current repo. Run once p
 
 # agent-farm-init
 
-Set up the agent farm in this repo.
+Set up this repo for the conductor (`farmctl conduct`) or for the full board farm.
+
+## Choose: conductor only (recommended) or the board farm
+
+Unless the user's request already says which, ask: "Conductor only (recommended), or the full
+board farm (kanban board, supervised workers)?"
+
+**Conductor only.** Ask for the project's verify command (the test command that must pass from a
+clean clone), then run:
+
+    "${CLAUDE_PLUGIN_ROOT}"/engine/install.sh --init-project "$CLAUDE_PROJECT_DIR" --conductor-only --verify-cmd '<command>'
+
+It writes only `.agent-farm/farm.env` and two `.gitignore` entries, never overwrites a file, and
+prints the next steps; relay them. Without `--verify-cmd` it seeds the placeholder `npm run check`,
+which the user must replace. Skip everything below.
+
+**Board farm.** Continue with Step 0.
 
 ## Step 0 (macOS only) — ensure kanban-md is installed
 

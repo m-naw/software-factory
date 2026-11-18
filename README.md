@@ -33,11 +33,13 @@ One-time setup of a repository (details in [Conducting a plan](#conducting-a-pla
    design.
 2. **Plugin.** Install it (see [Install](#install--two-steps)); after every update, check the cache
    against the checkout with `diff -r` (updates are keyed on the plugin version).
-3. **Repository config.** Run `software-factory:agent-farm-init` (it also sets up the board farm's board
-   and supervision units, which the conductor does not use; leave them stopped), then commit
-   `.agent-farm/farm.env` with a `FARM_VERIFY_CMD` that passes from a clean clone (your test command)
-   and a project `CLAUDE.md`. The installer adds `.farm-worktrees/` and `.agent-farm/state/` to
-   `.gitignore`.
+3. **Repository config.** Run `software-factory:agent-farm-init` and choose conductor only, or run
+   the installer yourself:
+   `"${CLAUDE_PLUGIN_ROOT}"/engine/install.sh --init-project <repo> --conductor-only --verify-cmd '<your test command>'`.
+   It writes only `.agent-farm/farm.env` (`FARM_VERIFY_CMD`, which must pass from a clean clone) and
+   adds `.farm-worktrees/` and `.agent-farm/state/` to `.gitignore`: no board, no supervision units,
+   no `kanban-md`. Commit both files, with a project `CLAUDE.md`, by pull request. (The full init in
+   [Install](#install--two-steps) sets up the board farm.)
 4. **Notifications.** Set `FARM_NOTIFY_CMD` in your own environment (never in the repository): see
    [Notifications](#notifications).
 
