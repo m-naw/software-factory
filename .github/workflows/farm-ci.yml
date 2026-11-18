@@ -1,9 +1,10 @@
 # CI for the farm plugin's own bash — merge authority must not change untested.
-# Linux (lint-and-test) runs on every PR/push; macOS (bash 3.2/BSD): conduct-macos nightly and on dispatch `macos=true`; test-macos (~37 min) nightly and on dispatch `macos_full=true`.
+# Linux (lint-and-test, conduct-linux) runs on every PR and on code pushes to main; macOS (bash 3.2/BSD): conduct-macos nightly and on dispatch `macos=true`; test-macos (~37 min) nightly and on dispatch `macos_full=true`.
 name: farm-ci
 on:
+  # Every pull request, docs-only included: lint-and-test and conduct-linux are the branch's required checks, and a
+  # required check that never reports blocks the merge (a conductor handoff pull request changes only docs).
   pull_request:
-    paths: ['bin/**', 'hooks/**', 'engine/**', 'skills/**', 'contract/**', 'defaults/**', '.github/workflows/farm-ci.yml']
   push:
     branches: [main]
     paths: ['bin/**', 'hooks/**', 'engine/**', 'skills/**', 'contract/**', 'defaults/**']
