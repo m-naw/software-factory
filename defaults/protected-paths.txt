@@ -1,0 +1,24 @@
+# protected-paths.txt — DEFAULT (generic, project-agnostic) surfaces where
+# agent QA MUST NOT auto-merge. A PR touching ANY file matching these globs
+# is escalated (moved to the `escalated` status), even with green CI. The guard
+# hook is a deterministic LAYER (it blocks the `gh pr merge` and `gh api
+# pulls/N/merge` routes for these globs); the real rail is platform branch
+# protection + CODEOWNERS. Do not treat the hook as the sole enforcement.
+#
+# Glob semantics: bash pattern match, '*' crosses '/' (prisma/migrations/*
+# matches nested files). Lines starting with # and blank lines are ignored.
+#
+# This file ships with the plugin and applies when the adopting repo's default
+# branch (origin/HEAD, else origin/main, else origin/master) has no
+# .agent-farm/protected-paths.txt committed (see
+# templates/project-protected-paths.txt for the operator-facing template). The
+# merge gate never reads the work tree's copy, and it always adds its own
+# mandatory list (the four globs below plus .github/actions/*, *CODEOWNERS,
+# docs/superpowers/handoffs/* and docs/superpowers/plans/*), which no project
+# file can remove.
+
+# --- the rails themselves ----------------------------------------------------
+.github/workflows/*
+CODEOWNERS
+.claude/*
+.agent-farm/*

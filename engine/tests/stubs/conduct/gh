@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Hermetic fake `gh` for engine/tests/conduct.sh. State lives in $GH_FAKE_DIR:
+#   prs.json (pull requests), checks.json, rules.json, ruleset.json, protection.json
+#   (all optional overrides), unknown.log (arguments of every unsupported call).
+#   A pull request with "frozen": true keeps its headRefOid and files (a stale GitHub answer).
+#   fail.<subcommand> (for example fail.list, fail.merge): that `pr <subcommand>` exits 1.
+#   merge.foreign (a sha): `pr merge` merges, records that sha as the head, and exits 1.
+#   merge.argv: the full argv of every `pr merge` call, one argument per line.
+# The "remote" is the bare repository $GH_FAKE_ORIGIN (default: `git remote get-url
+# origin` of the cwd). `-R <slug>` is accepted and ignored. bash 3.2-safe.
+D="${GH_FAKE_DIR:-}"
+[ -n "$D" ] && [ -d "$D" ] || { echo "gh fake: GH_FAKE_DIR not set" >&2; exit 1; }
+O="${GH_FAKE_ORIGIN:-$(git remote get-url origin 2>/dev/null)}"
+P="$D/prs.json"
+[ -f "$P" ] || echo '[]' > "$P"
+IDENT=(-c user.name=gh-fake -c user.email=gh-fake@example.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null)
+
+[ "${1:-} ${2:-}" != "pr merge" ] || printf '%s\n' "$@" >> "$D/merge.argv"
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in -R) shift; [ $# -gt 0 ] && shift ;; *) args+=("$1"); shift ;; esac
+done
+set -- "${args[@]}"
+
+unknown() { echo "$*" >> "$D/unknown.log"; exit 1; }
+gitO() { git --git-dir="$O" "$@"; }
+mainb() { gitO symbolic-ref --short HEAD; }
+# Refresh headRefOid and files of every OPEN pull request from the origin.
+refresh() {
+  local n b oid files m tmp
+  m="$(mainb)"
+  for n in $(jq -r '.[] | select(.state=="OPEN" and (.frozen|not)) | .number' "$P"); do
+    b="$(jq -r --argjson n "$n" '.[] | select(.number==$n) | .headRefName' "$P")"
+    oid="$(gitO rev-parse "refs/heads/$b" 2>/dev/null)" || oid=""
+    files="$(gitO diff --name-only "$m...$b" 2>/dev/null | jq -R . | jq -sc 'map(select(length>0)|{path:.})')"
+    tmp="$P.tmp"
+    jq --argjson n "$n" --arg oid "$oid" --argjson f "$files" \
+      'map(if .number==$n then .headRefOid=$oid | .files=$f else . end)' "$P" > "$tmp" && mv "$tmp" "$P"
+  done
+}
+proj() { jq -c --arg f "$1" '($f|split(",")) as $k | with_entries(select(.key as $x | ($k | index($x))))'; }
+
+# Exact argument shapes only (brief M3a.1); anything else goes to unknown.log.
+shape=""
+case "${1:-} ${2:-}" in
+"pr list")   [ $# -eq 10 ] && [ "$3 $4 $5 $7 $8 $9" = "--state all --search --limit 200 --json" ] && case "$6" in head:*) shape=ok ;; esac ;;
+"pr view")   [ $# -eq 5 ] && [ "$4" = --json ] && shape=ok ;;
+"pr checks") [ $# -eq 6 ] && [ "$4 $5 $6" = "--required --json name,bucket" ] && shape=ok ;;
+"pr merge")  [ $# -eq 6 ] && [ "$4 $5" = "--squash --match-head-commit" ] && [ -n "$6" ] && shape=ok ;;
+"pr create") [ "${3:-}" = --head ] && shape=ok ;;
+"api repos/"*) [ $# -eq 2 ] && shape=ok ;;
+esac
+[ -n "$shape" ] || unknown "$@"
+[ "${1:-}" != pr ] || [ ! -f "$D/fail.${2:-}" ] || { echo "gh fake: pr ${2:-} fails (fail.${2:-})" >&2; exit 1; }
+
+case "${1:-} ${2:-}" in
+"pr create")
+  shift 2; head=""; title=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --head) head="$2"; shift 2 ;; --title) title="$2"; shift 2 ;; *) shift ;; esac
+  done
+  [ -n "$head" ] || unknown pr create "$@"
+  n=$(( $(jq 'length' "$P") + 1 ))
+  jq --argjson n "$n" --arg b "$head" --arg t "$title" --arg base "$(mainb)" \
+    '. + [{number:$n, headRefName:$b, baseRefName:$base, isCrossRepository:false, state:"OPEN", title:$t, url:("https://github.com/fake/repo/pull/" + ($n|tostring)), files:[], headRefOid:""}]' \
+    "$P" > "$P.tmp" && mv "$P.tmp" "$P"
+  refresh
+  echo "https://github.com/fake/repo/pull/$n"
+  ;;
+"pr list")
+  shift 2; st=open; pre=""; fields="number"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --state) st="$2"; shift 2 ;;
+      --search) pre="${2#head:}"; shift 2 ;;
+      --json) fields="$2"; shift 2 ;;
+      --limit) shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  refresh
+  # Like GitHub's head: search, no exact prefix match: a trailing "/" is not required.
+  jq -c --arg st "$st" --arg pre "${pre%/}" \
+    '[.[] | select(($st=="all") or (.state==($st|ascii_upcase))) | select(.headRefName|startswith($pre))]' "$P" \
+    | jq -c --arg f "$fields" '($f|split(",")) as $k | map(with_entries(select(.key as $x | ($k | index($x)))))'
+  ;;
+"pr view")
+  n="${3:-}"; fields="number"; shift 3
+  while [ $# -gt 0 ]; do case "$1" in --json) fields="$2"; shift 2 ;; *) shift ;; esac; done
+  refresh
+  jq -ce --argjson n "${n:-0}" '.[] | select(.number==$n)' "$P" | proj "$fields" || exit 1
+  [ -n "$(jq -r --argjson n "${n:-0}" '.[] | select(.number==$n) | .number' "$P")" ] || exit 1
+  ;;
+"pr checks")
+  if [ -f "$D/checks.json" ]; then cat "$D/checks.json"; else echo '[{"name":"ci","bucket":"pass"}]'; fi
+  ;;
+"pr merge")
+  n="${3:-}"; want=""; shift 3
+  while [ $# -gt 0 ]; do case "$1" in --match-head-commit) want="$2"; shift 2 ;; *) shift ;; esac; done
+  refresh
+  b="$(jq -r --argjson n "${n:-0}" '.[] | select(.number==$n and .state=="OPEN") | .headRefName' "$P")"
+  [ -n "$b" ] || { echo "gh fake: no open pull request #$n" >&2; exit 1; }
+  head="$(gitO rev-parse "refs/heads/$b")" || exit 1
+  [ -z "$want" ] || [ "$want" = "$head" ] || { echo "gh fake: head $head does not match $want" >&2; exit 1; }
+  m="$(mainb)"; t="$(mktemp -d "${TMPDIR:-/tmp}/gh-fake.XXXXXX")"
+  if git clone -q "$O" "$t/c" 2>/dev/null && cd "$t/c" && git checkout -q "$m" \
+     && git "${IDENT[@]}" merge --squash -q "origin/$b" >/dev/null 2>&1 \
+     && git "${IDENT[@]}" commit -q --allow-empty -m "squash $b (#$n)" \
+     && git push -q origin "HEAD:refs/heads/$m" 2>/dev/null; then
+    rm -rf "$t"; cd / || true
+    jq --argjson n "$n" 'map(if .number==$n then .state="MERGED" else . end)' "$P" > "$P.tmp" && mv "$P.tmp" "$P"
+    # merge.foreign: someone else merged it at the head named in the file; this call fails.
+    if [ -f "$D/merge.foreign" ]; then
+      jq --argjson n "$n" --arg h "$(cat "$D/merge.foreign")" 'map(if .number==$n then .headRefOid=$h | .frozen=true else . end)' "$P" > "$P.tmp" && mv "$P.tmp" "$P"
+      echo "gh fake: already merged by someone else" >&2; exit 1
+    fi
+  else
+    rm -rf "$t"; echo "gh fake: merge failed" >&2; exit 1
+  fi
+  ;;
+"api repos/"*)
+  case "$2" in
+    repos/*/rules/branches/*)
+      if [ -f "$D/rules.json" ]; then cat "$D/rules.json"; else
+        echo '[{"type":"pull_request","ruleset_id":1,"parameters":{}},{"type":"required_status_checks","ruleset_id":1,"parameters":{"required_status_checks":[{"context":"ci"}]}}]'
+      fi ;;
+    repos/*/rulesets/1)
+      if [ -f "$D/ruleset.json" ]; then cat "$D/ruleset.json"; else echo '{"current_user_can_bypass":"never"}'; fi ;;
+    repos/*/branches/*/protection)
+      if [ -f "$D/protection.json" ]; then cat "$D/protection.json"; else exit 1; fi ;;
+    *) unknown "$@" ;;
+  esac
+  ;;
+*) unknown "$@" ;;
+esac

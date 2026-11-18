@@ -1,0 +1,9 @@
+{
+  "name": "agent-farm",
+  "displayName": "Autonomous Agent Farm",
+  "version": "0.3.0",
+  "description": "File-based kanban + systemd (Linux) / launchd (macOS) supervision for an autonomous multi-agent dev farm: engine, coordination skills, a bash safety hook, and governance templates.",
+  "author": { "name": "m-naw" },
+  "license": "MIT",
+  "keywords": ["agents", "kanban", "automation", "systemd", "launchd", "orchestration"]
+}

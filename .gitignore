@@ -1,0 +1,7 @@
+node_modules/
+*.log
+
+# Farm runtime state (Task 5 relocation contract) — lives in the TARGET repo,
+# which for this repo's own test runs is this repo itself.
+/.agent-farm/
+/.farm-worktrees/

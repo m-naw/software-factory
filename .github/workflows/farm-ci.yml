@@ -1,0 +1,113 @@
+# CI for the farm plugin's own bash — merge authority must not change untested.
+# Linux (lint-and-test) runs on every PR/push; macOS (bash 3.2/BSD): conduct-macos nightly and on dispatch `macos=true`; test-macos (~37 min) nightly and on dispatch `macos_full=true`.
+name: farm-ci
+on:
+  pull_request:
+    paths: ['bin/**', 'hooks/**', 'engine/**', 'skills/**', 'contract/**', 'defaults/**', '.github/workflows/farm-ci.yml']
+  push:
+    branches: [main]
+    paths: ['bin/**', 'hooks/**', 'engine/**', 'skills/**', 'contract/**', 'defaults/**']
+  workflow_dispatch:
+    inputs:
+      macos:
+        description: run the macOS bash 3.2/BSD jobs too
+        type: boolean
+        default: false
+      macos_full:
+        description: also run the full farm suite on macOS, ~37 min
+        type: boolean
+        default: false
+  schedule:
+    - cron: '23 2 * * *'
+concurrency:
+  group: farm-ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: shellcheck
+        run: |
+          command -v shellcheck >/dev/null || { sudo apt-get update -q && sudo apt-get install -y shellcheck; }
+          shellcheck --version | head -2
+          shellcheck -x -S warning bin/*.sh bin/farmctl \
+            hooks/guard-bash.sh engine/install.sh
+          # run.sh drops -x: it sources bin/farm-lib.sh 61x (test subshells);
+          # -x re-follows/re-analyzes that file on every source, which OOMs
+          # shellcheck. farm-lib.sh is linted directly above with -x.
+          shellcheck -S warning engine/tests/run.sh
+      - name: install kanban-md (pinned)
+        run: |
+          # Pin to the version the farm runs locally (mirrors engine/install.sh §1).
+          # NOT npm 'latest' — that is an unrelated package (0.2.0). Install the
+          # GitHub release binary, arch-aware. This lets engine/tests/run.sh's
+          # live-board e2e ordering proof run in CI instead of SKIPping.
+          KBMD_VERSION=0.33.0
+          ARCH="$(uname -m)"; case "$ARCH" in
+            x86_64) GOARCH=amd64 ;;
+            aarch64 | arm64) GOARCH=arm64 ;;
+            *) echo "unsupported arch: $ARCH" >&2; exit 1 ;;
+          esac
+          TMP="$(mktemp -d)"
+          URL="https://github.com/antopolskiy/kanban-md/releases/download/v${KBMD_VERSION}/kanban-md_${KBMD_VERSION}_linux_${GOARCH}.tar.gz"
+          curl -fsSL "$URL" -o "$TMP/kbmd.tgz"
+          tar -xzf "$TMP/kbmd.tgz" -C "$TMP"
+          sudo install -m 0755 "$TMP/kanban-md" /usr/local/bin/kanban-md
+          rm -rf "$TMP"
+      - name: farm test suite
+        run: engine/tests/run.sh
+  # Not on PRs/pushes: the job takes ~37 min. Runs nightly (main) and on
+  # `gh workflow run farm-ci.yml -f macos_full=true` (once at the end of a plan increment), not per unit.
+  test-macos:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.macos_full)
+    runs-on: macos-latest
+    # shellcheck ~100s + the 685-assertion suite genuinely runs ~29m on this
+    # runner (subshell-fork-heavy, macos-latest is slower than ubuntu-latest);
+    # 30m left almost no margin (one run finished at 29m18s). Raise for slack.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: shellcheck
+        run: |
+          brew install shellcheck
+          shellcheck -x -S warning bin/*.sh bin/farmctl \
+            hooks/guard-bash.sh engine/install.sh
+          # run.sh drops -x: it sources bin/farm-lib.sh 61x (test subshells);
+          # -x re-follows/re-analyzes that file on every source, which OOMs
+          # shellcheck. farm-lib.sh is linted directly above with -x.
+          shellcheck -S warning engine/tests/run.sh
+      - name: install farm deps (git/curl are preinstalled on macos-latest)
+        run: brew install jq gh tmux
+      # kanban-md is intentionally NOT installed here. This job's purpose is
+      # to prove the PORTABILITY layer (helpers/canon/guard/supervision-
+      # deciders/install-render/bash-3.2) — the platform-independent farm
+      # LOGIC (kanban-md live-board e2e: reconcile/archive/ci-rescue/ci-watch)
+      # is already fully exercised on ubuntu, where a real binary IS
+      # installed. Every run.sh assertion that needs a real kanban-md binary
+      # (not its own PATH-stubbed fake) SKIP-guards on `command -v kanban-md`
+      # and simply doesn't run here — see the e2e live-board block and the
+      # farmctl-status smoke test in engine/tests/run.sh.
+      - name: farm test suite (stock bash 3.2, BSD userland — no coreutils)
+        run: /bin/bash engine/tests/run.sh
+  # Plan Conductor suite (engine/tests/conduct.sh), full tier, on every event.
+  conduct-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: shellcheck
+        run: shellcheck -S warning engine/tests/conduct.sh
+      - name: conductor test suite
+        run: engine/tests/conduct.sh
+  # Smoke tier on stock bash 3.2/BSD userland (seconds); nightly and on dispatch `macos=true` (per unit) or `macos_full=true`.
+  conduct-macos:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.macos || inputs.macos_full))
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: install jq
+        run: brew install jq
+      - name: conductor test suite (smoke tier, stock bash 3.2)
+        run: CONDUCT_TEST_TIER=smoke /bin/bash engine/tests/conduct.sh

@@ -1,0 +1,44 @@
+# protected-paths.txt — PROJECT OVERRIDE template.
+#
+# >>> OPERATOR ACTION REQUIRED <<<
+# Copy this file to .agent-farm/protected-paths.txt in your repo, adapt it,
+# and merge it to your default branch: the merge gate reads it from
+# origin/<default branch>, never from an agent's work tree. Uncomment/adjust
+# the example globs below to match YOUR project's safety-critical,
+# money/identity, and destructive-admin surfaces — a PR touching ANY matching
+# file is escalated (moved to the `escalated` status), even with green CI. Your
+# globs are added to the guard's mandatory list (.github/workflows/*,
+# .github/actions/*, CODEOWNERS, *CODEOWNERS, .claude/*, .agent-farm/*,
+# docs/superpowers/handoffs/*, docs/superpowers/plans/*); this file cannot
+# remove any of those. The
+# commented lines below are a worked EXAMPLE from a prior adopter's repo; they
+# will not match your codebase as-is.
+#
+# Glob semantics: bash pattern match, '*' crosses '/' (prisma/migrations/*
+# matches nested files). Lines starting with # and blank lines are ignored.
+
+# --- EXAMPLE (uncomment/adapt to your repository, do not use verbatim) ------
+# --- safety-critical product surfaces ---------------------------------------
+# src/domain-rules/*
+# src/i18n/bundles/*
+# A domain safety gate (a runtime backstop that must never be bypassed):
+# src/safety-gate/*
+# TODO(operator): if a gate's runtime is spread across several files, list each
+# file deliberately; a bare keyword glob can miss the files that call it.
+
+# --- money / identity -------------------------------------------------------
+# prisma/migrations/*
+# prisma/schema.prisma
+# *auth*
+# *payment*
+
+# --- destructive / identity admin surfaces ---------------------------------
+# src/app/api/admin/users/*
+# src/platform/privacy/*
+# src/app/api/user/account/*
+
+# --- the rails themselves (live baseline — keep uncommented) ----------------
+.github/workflows/*
+CODEOWNERS
+.claude/*
+.agent-farm/*

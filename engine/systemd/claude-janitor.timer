@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Claude farm janitor every 30 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=30min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

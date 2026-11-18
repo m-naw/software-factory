@@ -1,0 +1,7 @@
+{
+  "name": "agent-farm-tools",
+  "owner": { "name": "m-naw" },
+  "plugins": [
+    { "name": "agent-farm", "source": "./", "description": "Autonomous agent farm engine + skills." }
+  ]
+}

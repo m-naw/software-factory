@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Trivial stub — echoes its argv and exits 0. Lets farmctl's sup_* calls be
+# exercised on a box without a live systemd --user session.
+echo "$@"
+exit 0

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Trivial stub — echoes its argv and exits 0. Lets farmctl's sup_* argv
+# construction be exercised (FARM_OS_OVERRIDE=macos) without a real launchd.
+echo "$@"
+exit 0

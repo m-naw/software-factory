@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# Hermetic fake `claude` for engine/tests/conduct.sh. State dir: $CLAUDE_FAKE_DIR.
+#   script        one action word per line; invocation n runs line n (missing -> "nothing")
+#   handoff.md    content the `handoff` action commits (default "# handoff")
+# Per invocation n it saves argv.<n>, prompt.<n>, env.<n>, cwd.<n>, pid.<n> and, when
+# $CLAUDE_FAKE_SNAPSHOT names a directory, a copy of it as snap.<n> (first of all).
+# Prompt = the value after `-p`; with no `-p`, the last argument. The context block
+# (KEY: value lines between <conduct_context> and </conduct_context>) is read from it.
+# Actions: handoff handoff-quote nothing hang limit transient noguard noinit apikey (like nothing,
+# with an init apiKeySource of ANTHROPIC_API_KEY); code-pr (a pull request under BRANCH_PREFIX,
+# merged through the fake gh); protected-pr (an open one under BRANCH_PREFIX changing .claude/x);
+# direct-push (the handoff pushed straight to MAIN_BRANCH); protected-and-handoff;
+# open-pr-and-handoff (an open, unprotected code pull request, then the handoff); bad-handoff
+# (the handoff commit also changes README.md); review-accept and review-reject (a Security review
+# section appended to HANDOFF_OUT on HANDOFF_BRANCH and pushed, FINDINGS_FILE written, then
+# VERDICT_FILE with NONCE and the pushed head: accept 0 0 1, reject 1 0 0); review-noverdict
+# (like nothing); review-stale (review-accept's push, a verdict with a wrong nonce); break-verify
+# (as code-pr, but the merged change makes verify.sh print VERIFY-BROKEN and exit 1). Every action but
+# nothing and apikey logs a FARM-GUARD BLOCKED tool result; guard-stop is nothing with that denial.
+# `--resume <id>` is just recorded in argv. Prints stream-json on stdout. bash 3.2-safe.
+D="${CLAUDE_FAKE_DIR:?CLAUDE_FAKE_DIR not set}"
+n=1; while [ -e "$D/argv.$n" ]; do n=$((n+1)); done
+if [ -n "${CLAUDE_FAKE_SNAPSHOT:-}" ] && [ -d "$CLAUDE_FAKE_SNAPSHOT" ]; then
+  cp -R "$CLAUDE_FAKE_SNAPSHOT" "$D/snap.$n"
+fi
+printf '%s\n' "$@" > "$D/argv.$n"
+env > "$D/env.$n"; pwd > "$D/cwd.$n"; echo "$$" > "$D/pid.$n"
+git rev-parse HEAD > "$D/head.$n" 2>/dev/null || true
+
+prompt=""; settings=""; plugin=""; last=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -p) prompt="$2"; shift ;;
+    --settings) settings="$2"; shift ;;
+    --plugin-dir) plugin="$2"; shift ;;
+  esac
+  last="$1"; shift
+done
+[ -n "$prompt" ] || prompt="$last"
+printf '%s' "$prompt" > "$D/prompt.$n"
+ctx() { printf '%s\n' "$prompt" | sed -n '/<conduct_context>/,/<\/conduct_context>/p' | sed -n "s/^$1: *//p" | head -1; }
+
+action="$(sed -n "${n}p" "$D/script" 2>/dev/null)"; [ -n "$action" ] || action=nothing
+sid="00000000-0000-0000-0000-$(printf '%012d' "$n")"
+if [ -f "$settings" ]; then hooks="$(jq -c '[.. | objects | select(has("command")) | .command]' "$settings")"; else hooks='[]'; fi
+[ "$action" = noinit ] && exec sleep 300
+
+if [ "$action" = noguard ]; then
+  jq -nc --arg s "$sid" '{type:"system",subtype:"init",session_id:$s,tools:["Bash","Agent"],mcp_servers:[],model:"claude-opus-5",permissionMode:"bypassPermissions",apiKeySource:"none",claude_code_version:"0.0.0-fake"}'
+  exec sleep 300
+fi
+ks=none; [ "$action" = apikey ] && ks=ANTHROPIC_API_KEY
+jq -nc --arg s "$sid" --argjson h "$hooks" --arg p "$plugin" --arg k "$ks" \
+  '{type:"system",subtype:"init",session_id:$s,tools:["Bash","Agent"],mcp_servers:[],model:"claude-opus-5",permissionMode:"bypassPermissions",apiKeySource:$k,claude_code_version:"0.0.0-fake",hooks:$h}
+   + (if $p=="" then {} else {plugins:[{name:"agent-farm",path:$p}]} end)'
+jq -nc --arg v "$(ctx VERIFY_CMD)" '{type:"assistant",message:{content:[
+  {type:"tool_use",id:"t1",name:"Agent",input:{model:"haiku",description:"fake",prompt:"fake"}},
+  {type:"tool_use",id:"t2",name:"Bash",input:{command:$v}}]}}'
+# No denial for nothing and apikey: a no-progress session with a denial is guard-stop's (guard-blocked).
+case "$action" in nothing|apikey) ;; *)
+  jq -nc '{type:"user",message:{content:[{type:"tool_result",tool_use_id:"t2",content:"FARM-GUARD BLOCKED: fake"}]}}' ;;
+esac
+
+result() { # <is_error> <text> [extra json object]
+  local x="${3:-}"; [ -n "$x" ] || x='{}'
+  jq -nc --arg s "$sid" --argjson e "$1" --arg t "$2" --argjson x "$x" \
+    '{type:"result",subtype:(if $e then "error_during_execution" else "success" end),is_error:$e,result:$t,session_id:$s,
+      modelUsage:{"claude-opus-5":{inputTokens:100,outputTokens:50,cacheReadInputTokens:0,cacheCreationInputTokens:0,costUSD:0},
+                  "claude-haiku-4-5":{inputTokens:10,outputTokens:5,cacheReadInputTokens:0,cacheCreationInputTokens:0,costUSD:0}}} + $x'
+}
+git_() { git -c user.name=claude-fake -c user.email=claude-fake@example.invalid -c commit.gpgsign=false -c core.hooksPath=/dev/null "$@"; }
+do_handoff() {
+  local out br; out="$(ctx HANDOFF_OUT)"; br="$(ctx HANDOFF_BRANCH)"
+  [ -n "$out" ] && [ -n "$br" ] || { echo "claude fake: no HANDOFF_OUT/HANDOFF_BRANCH in prompt" >&2; exit 2; }
+  if git ls-remote --exit-code --heads origin "$br" >/dev/null 2>&1; then
+    git fetch -q origin "$br" && git checkout -q -B "$br" FETCH_HEAD || exit 2
+  else
+    git checkout -q -b "$br" || exit 2
+  fi
+  mkdir -p "$(dirname "$out")"
+  if [ -f "$D/handoff.md" ]; then cp "$D/handoff.md" "$out"; else echo "# handoff" > "$out"; fi
+  if [ -n "${1:-}" ]; then echo "$n" >> "$1"; git add -- "$1" || exit 2; fi
+  git add -- "$out" && git_ commit -q --allow-empty -m "handoff $n" && git push -q origin "$br:$br" || exit 2
+  if [ "$(gh pr list --state all --search "head:$br" --limit 200 --json number,headRefName | jq --arg b "$br" '[.[] | select(.headRefName==$b)] | length')" = 0 ]; then
+    gh pr create --head "$br" --title "handoff" --body "fake" >/dev/null || exit 2
+  fi
+}
+
+START="$(git rev-parse HEAD 2>/dev/null)"
+# <name> <path> [content]: a commit adding <path> (content, default the invocation number) on BRANCH_PREFIX<name> from the session's start commit,
+# pushed, and a pull request opened for it; stdout its number. HEAD is back at the start after.
+open_pr() {
+  local br; br="$(ctx BRANCH_PREFIX)$1"
+  git checkout -q -B "$br" "$START" || exit 2
+  mkdir -p "$(dirname "$2")"
+  if [ -n "${3:-}" ]; then printf '%s\n' "$3" > "$2"; else echo "$n" > "$2"; fi
+  git add -- "$2" && git_ commit -q -m "$br" && git push -q origin "$br:$br" || exit 2
+  gh pr create --head "$br" --title "$1" --body fake | sed 's#.*/##' || exit 2
+  git checkout -q --detach "$START" || exit 2
+}
+direct_push() {
+  local out; out="$(ctx HANDOFF_OUT)"
+  git checkout -q --detach "$START" || exit 2
+  mkdir -p "$(dirname "$out")"; echo "# handoff" > "$out"
+  git add -- "$out" && git_ commit -q -m "handoff $n" && git push -q origin "HEAD:refs/heads/$(ctx MAIN_BRANCH)" || exit 2
+}
+
+# <verdict> <high> <medium> <low> [nonce]: the review session's work (strict: every key needed).
+do_review() {
+  local out br vf nf no rg
+  out="$(ctx HANDOFF_OUT)"; br="$(ctx HANDOFF_BRANCH)"; vf="$(ctx VERDICT_FILE)"; nf="$(ctx FINDINGS_FILE)"
+  no="$(ctx NONCE)"; rg="$(ctx RANGE)"
+  [ -n "$out" ] && [ -n "$br" ] && [ -n "$nf" ] && [ -n "$no" ] && [ -n "$rg" ] || { echo "claude fake: review keys missing" >&2; exit 2; }
+  case "$vf" in /tmp/farm-verdict.?*/?*) ;; *) echo "claude fake: bad VERDICT_FILE $vf" >&2; exit 2 ;; esac
+  # Detached: the lead's kept work tree still has $br checked out, and git >= 2.44 refuses checkout -B of it.
+  git fetch -q origin "$br" && git checkout -q --detach FETCH_HEAD || exit 2
+  printf '\n## 5a. Security review (plan §0.5)\n\nRange %s: none above the bar.\n' "$rg" >> "$out"
+  git add -- "$out" && git_ commit -q -m "security review $n" && git push -q origin "HEAD:refs/heads/$br" || exit 2
+  if [ "$1" = reject ]; then echo "- High: fake finding (src/x.sh:1)" > "$nf"; else echo "- Low: fake note (src/x.sh:2)" > "$nf"; fi
+  jq -nc --arg u "$(ctx UNIT)" --arg o "${5:-$no}" --arg v "$1" --arg h "$(git rev-parse HEAD)" \
+    --argjson a "$2" --argjson b "$3" --argjson c "$4" \
+    '{unit: $u, nonce: $o, verdict: $v, head: $h, high: $a, medium: $b, low: $c}' > "$vf" || exit 2
+}
+
+case "$action" in
+  review-accept) do_review accept 0 0 1; result false "done" ;;
+  review-reject) do_review reject 1 0 0; result false "done" ;;
+  review-stale) do_review accept 0 0 0 00000000000000000000000000000000; result false "done" ;;
+  review-noverdict) result false "done" ;;
+  handoff) do_handoff; result false "done" ;;
+  bad-handoff) do_handoff README.md; result false "done" ;;
+  code-pr)
+    pr="$(open_pr code src/code.txt)"
+    gh pr merge "$pr" --squash --match-head-commit "$(git rev-parse "$(ctx BRANCH_PREFIX)code")" >/dev/null || exit 2
+    result false "done" ;;
+  break-verify)
+    pr="$(open_pr code verify.sh "$(printf '#!/bin/sh\necho VERIFY-BROKEN\nexit 1')")"
+    gh pr merge "$pr" --squash --match-head-commit "$(git rev-parse "$(ctx BRANCH_PREFIX)code")" >/dev/null || exit 2
+    result false "done" ;;
+  protected-pr) open_pr protected .claude/x >/dev/null; result false "done" ;;
+  protected-and-handoff) open_pr protected .claude/x >/dev/null; do_handoff; result false "done" ;;
+  open-pr-and-handoff) open_pr code src/code.txt >/dev/null; do_handoff; result false "done" ;;
+  direct-push) direct_push; result false "done" ;;
+  handoff-quote) do_handoff; result false "Note: the limit message reads: You've hit your session limit." ;;
+  nothing|apikey|guard-stop) result false "done" ;;
+  hang) exec sleep 300 ;;
+  limit)
+    jq -nc --argjson r "$(( $(date +%s) + 120 ))" '{type:"rate_limit_event",rate_limit_info:{status:"rejected",resetsAt:$r,rateLimitType:"five_hour"}}'
+    result true "You've hit your session limit · resets soon"; exit 1 ;;
+  transient) result true "API Error: Overloaded" '{"api_error_status":529}'; exit 1 ;;
+  *) echo "claude fake: unknown action $action" >&2; exit 2 ;;
+esac

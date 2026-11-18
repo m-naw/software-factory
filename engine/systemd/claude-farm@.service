@@ -1,0 +1,27 @@
+# Templated worker unit. Instance name encodes the role:
+#   systemctl --user start claude-farm@implementer-1 claude-farm@qa-1
+[Unit]
+Description=Claude agent farm worker (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@FARM_BIN@/farm-runner.sh %i
+Environment=REPO_DIR=@REPO_DIR@
+WorkingDirectory=@REPO_DIR@
+Restart=always
+RestartSec=15
+# On stop/restart the runner's cleanup() trap kills the session, preserves WIP
+# (preserve_worktree_work carries its own 60s push timeout), then releases +
+# requeues the in-flight ticket. The stop budget must comfortably exceed that 60s
+# push so the requeue reliably lands before systemd SIGKILLs — otherwise a
+# graceful stop re-opens the "restart ≠ re-pick" wedge this is meant to close.
+# It is a ceiling, not a delay: an idle runner's cleanup() returns in well under
+# a second. Bumped 30→120 with docs/adr/2026-06-22-adr-farm-requeue-on-interrupt.md.
+TimeoutStopSec=120
+Nice=10
+Environment=NO_COLOR=1
+
+[Install]
+WantedBy=default.target

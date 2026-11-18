@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Claude farm scout every 3 hours
+
+[Timer]
+OnBootSec=20min
+OnUnitInactiveSec=3h
+RandomizedDelaySec=10min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

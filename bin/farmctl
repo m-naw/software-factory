@@ -1,0 +1,524 @@
+#!/usr/bin/env bash
+# farmctl — operate the agent farm.
+#   farmctl start [IMPL_N] [QA_N]   start workers + scout/janitor timers (default 2 1)
+#   farmctl stop                    stop everything
+#   farmctl scale <role> <N>        e.g. farmctl scale implementer 3
+#   farmctl status                  units + board summary + per-agent "what now"
+#   farmctl pause | resume          soft-pause all runners (finish current task first)
+#   farmctl release <task-id>       release a stuck claim (verifies claimed_by is cleared)
+#   farmctl logs [unit]             follow journal
+#   farmctl tail [target]           live-render a JSONL run log (newest, or by prefix/path)
+#   farmctl dash                    tmux dashboard (TUI + live tail + board)
+#   farmctl scout-now               force a scout sweep (ignores timer, keeps guards)
+#   farmctl audit                   verify safety assumptions on THIS box (creds, hook, tests)
+#   farmctl doctor                  health check — why is the farm doing no work? (stale units, silent stall)
+#   farmctl metrics                 per-role token-usage rollup from metrics/usage.jsonl
+#   farmctl conduct lint <plan>     Plan Conductor: units of a plan on origin/main
+#   farmctl conduct status <plan> [--json]           one row per unit (contract/README.md)
+#   farmctl conduct adopt <plan> <unit> <handoff>    record an existing handoff as shipped
+#   farmctl conduct run <plan> [<unit> [--answer <text>]]  run one unit, or every unit in order, to reviewed, merged handoffs
+
+# PD10: conduct dispatches before farm-lib.sh is sourced (farm-conduct.sh never sources it: farm.env must not run in the conductor).
+if [[ "${1:-}" == conduct ]]; then shift; exec "$BASH" "$(dirname "${BASH_SOURCE[0]}")/farm-conduct.sh" "$@"; fi
+
+source "$(dirname "${BASH_SOURCE[0]}")/farm-lib.sh"
+
+scale_role() { # role, target
+  local role="$1" n="$2" i
+  for i in $(seq 1 "$n"); do
+    sup_enable_worker "$role" "$i"
+  done
+  # stop any instances above the target, via sup_disable_worker (one call per
+  # over-target instance — symmetric with the sup_enable_worker loop above).
+  # Enumeration of "which instances currently exist" is OS-specific:
+  #   - macOS: sup_list_workers's `launchctl list` output has NO label column
+  #     (col 1 is the PID) — launchctl's own listing can't be awk'd for the
+  #     label the way systemd's `list-units` NAME column can. Enumerate the
+  #     concrete plist FILES in LAUNCHD_DIR instead (launchd has no glob, but
+  #     the files it was rendered into are the ground truth of what's scaled up).
+  #   - linux: unchanged — sup_list_workers's systemctl list-units NAME column.
+  if [[ "$(farm_os)" == "macos" ]]; then
+    local f base
+    for f in "$LAUNCHD_DIR/$LAUNCHD_PREFIX.worker.${role}-"*.plist; do
+      [[ -e "$f" ]] || continue
+      base="$(basename "$f" .plist)"
+      i="${base##*-}"
+      [[ "$i" =~ ^[0-9]+$ ]] || continue
+      (( i > n )) && sup_disable_worker "$role" "$i"
+    done
+  else
+    sup_list_workers \
+      | awk '{print $1}' \
+      | grep -oE "${role}-[0-9]+" | grep -oE '[0-9]+$' | sort -n | while read -r i; do
+          (( i > n )) && sup_disable_worker "$role" "$i"
+        done || true
+  fi
+}
+
+# --- live log viewer --------------------------------------------------------
+# The render formatter is the SHARED `FARM_LOG_FMT` from farm-lib.sh (sourced
+# above) — the same program the runner uses to write the persisted `.txt`
+# companion, so the live `farmctl tail` feed and the on-disk readable log are
+# byte-identical. See farm-lib.sh for what it keeps/drops.
+
+resolve_tail_target() { # [target] -> echoes the RAW (.log) run-log path (or empty)
+  local target="${1:-}"
+  if [[ -n "$target" && -f "$target" ]]; then echo "$target"; return; fi
+  local glob
+  case "$target" in
+    "")            glob="*.log" ;;
+    scout)         glob="scout-*.log" ;;
+    *)             glob="${target}-task*.log" ;;   # implementer-1, qa-1, ...
+  esac
+  # newest matching log by mtime. `|| true` + head keep this safe under the
+  # `set -e -o pipefail` inherited from farm-lib.sh when nothing matches.
+  { ls -1t "$LOG_DIR"/$glob 2>/dev/null || true; } | head -1
+}
+
+# --- per-agent "what now" ---------------------------------------------------
+# Map a claude-farm@ unit to a human-readable instance (strip prefix/suffix):
+#   "claude-farm@implementer-1.service" -> "implementer-1"
+instance_of_unit() { # unit -> instance
+  local u="$1"; u="${u#claude-farm@}"; u="${u%.service}"; echo "$u"
+}
+
+# Compact age of an ISO/epoch-ish timestamp ("3m", "2h", "1d"; "" if unknown).
+claim_age() { # iso-timestamp -> short age
+  local ts="$1" claimed_epoch now d
+  [[ -z "$ts" || "$ts" == "null" ]] && { echo ""; return; }
+  claimed_epoch="$(farm_iso_to_epoch "$ts" 2>/dev/null || echo "")"
+  [[ -z "$claimed_epoch" ]] && { echo ""; return; }
+  now="$(date +%s)"; d=$(( now - claimed_epoch ))
+  (( d < 0 )) && d=0
+  if   (( d < 3600 ));  then echo "$(( d / 60 ))m"
+  elif (( d < 86400 )); then echo "$(( d / 3600 ))h"
+  else echo "$(( d / 86400 ))d"; fi
+}
+
+# Print <=3 lines describing one running instance: its claimed task (id/title/
+# status/age) and its newest run-log + size (liveness signal). Read-only.
+agent_activity() { # instance, active-state
+  local inst="$1" state="$2" name log sz
+  name="farm-${inst}"
+  printf '  %-22s [%s]\n' "$inst" "$state"
+  # Newest task this agent currently owns on the board (read-only list). One jq
+  # pass emits "<line>\t<claimed_at>" so we can append a compact claim age.
+  local row title_line at age
+  row="$(kanban-md --dir "$BOARD_DIR" list --claimed-by "$name" --json 2>/dev/null \
+           | jq -r 'sort_by(.claimed_at // "") | reverse | .[0] as $t
+                    | if $t == null then ""
+                      else "    #\($t.id) \($t.title)  [\($t.status)]\t\($t.claimed_at // "")"
+                      end' 2>/dev/null)" || row=""
+  if [[ -n "$row" ]]; then
+    title_line="${row%%$'\t'*}"
+    at="${row#*$'\t'}"; [[ "$at" == "$row" ]] && at=""
+    age="$(claim_age "$at")"
+    [[ -n "$age" ]] && title_line="${title_line}  (claim age ${age})"
+    echo "$title_line"
+  else
+    echo "    (no task currently claimed by $name)"
+  fi
+  # Newest run-log + size: 0 bytes = opaque/stalled; growing = live.
+  log="$(resolve_tail_target "$inst")"
+  if [[ -n "$log" ]]; then
+    sz="$(farm_stat_size "$log")"
+    printf '    log: %s (%s bytes)\n' "$(basename "$log")" "$sz"
+  else
+    echo "    log: (none in $LOG_DIR)"
+  fi
+}
+
+# --- release a stuck claim --------------------------------------------------
+# kanban-md release semantics (verified on a /tmp scratch board, 2026-06-13):
+#   * `edit ID --release` clears claimed_by regardless of caller identity.
+#   * `edit ID --release --claim X` ERRORS ("cannot use --claim and --release
+#     together") and leaves the claim intact — this is exactly the silent
+#     no-op an operator hit hand-typing `--release --claim farm-qa-1`.
+# So: read who holds it (for the operator's eyes), release with --release ONLY,
+# then re-read and assert claimed_by is null. Print an unambiguous verdict.
+farm_release() { # task-id
+  local id="$1" before after
+  before="$(kanban-md --dir "$BOARD_DIR" show "$id" --json 2>/dev/null \
+              | jq -r '.claimed_by // ""')" || {
+    echo "release: cannot read task #$id from board ($BOARD_DIR)" >&2; return 1; }
+  if [[ -z "$before" ]]; then
+    echo "release: task #$id is already unclaimed — nothing to do."
+    return 0
+  fi
+  echo "release: task #$id held by '$before' — releasing…"
+  kanban-md --dir "$BOARD_DIR" edit "$id" --release >/dev/null 2>&1 || true
+  after="$(kanban-md --dir "$BOARD_DIR" show "$id" --json 2>/dev/null \
+             | jq -r '.claimed_by // ""')" || after="<unreadable>"
+  if [[ -z "$after" ]]; then
+    echo "release: OK — task #$id claimed_by is now null (was '$before')."
+    return 0
+  fi
+  echo "release: FAILED — task #$id still held by '$after' after --release." >&2
+  return 1
+}
+
+case "${1:-}" in
+  start)
+    scale_role implementer "${2:-2}"
+    scale_role qa "${3:-1}"
+    sup_start_timers
+    echo "farm up: implementers=${2:-2} qa=${3:-1}; scout+janitor timers on"
+    ;;
+  stop)
+    # `disable --now` on the template glob only stops instances that were
+    # *enabled* — farm instances are started directly by scale_role/start (via
+    # `enable --now`), but a hand-started one, or any that lost its enablement,
+    # stays active because the glob matches nothing to disable. Proven on dev-01
+    # (2026-06-13): timers went inactive yet both claude-farm@ instances stayed
+    # `active active`. `stop` on the template-instance glob reliably stops every
+    # running instance regardless of enablement; it is a no-op (quiet) when none
+    # are running. `systemctl stop` BLOCKS until each runner's cleanup() EXIT
+    # trap finishes, and that trap now releases + requeues the runner's in-flight
+    # ticket (requeue_interrupted_task). So every in-flight task is requeued by
+    # its OWN runner BEFORE we disable the janitor timer below — the janitor is
+    # now only the backstop for hard-killed (SIGKILL/OOM) orphans, not the
+    # primary requeue path. sup_stop_all stops workers + timers (systemd:
+    # stop+disable workers via `disable`, stop+disable claude-scout.timer/
+    # claude-janitor.timer via `disable --now`; launchd: bootout everything).
+    # They will NOT re-arm on the next `systemctl --user` session start.
+    sup_stop_all
+    echo "farm stopped — running sessions terminated; each runner requeued its in-flight task on the way down (janitor backstops any hard-killed orphans)"
+    ;;
+  scale)
+    scale_role "${2:?role}" "${3:?count}" ;;
+  pause)  touch "$PAUSE_FILE"; echo "paused — runners finish their current task, then idle" ;;
+  resume) rm -f "$PAUSE_FILE"; echo "resumed" ;;
+  release) farm_release "${2:?usage: farmctl release <task-id>}" ;;
+  status)
+    # Display listing: sup_status (systemctl 'claude-*' | launchctl list +
+    # plist ls). NOTE: on Linux this is broader than the old farmctl-only
+    # command here (systemctl --user list-units 'claude-farm@*'
+    # claude-scout.timer claude-janitor.timer --no-pager) — sup_status uses
+    # --all 'claude-*' (also shows inactive/dead units and any other
+    # claude-prefixed unit). Cosmetic only (human-readable listing, nothing
+    # downstream parses it) — flagged, not silently accepted.
+    sup_status
+    [[ -f "$GATE_FILE" ]] && echo "LIMIT GATE until: $(farm_epoch_to_iso "$(cat "$GATE_FILE")")"
+    [[ -f "$PAUSE_FILE" ]] && echo "PAUSED"
+    echo; kb board
+    # Per-agent "what is each instance doing RIGHT NOW": claimed task + live
+    # log. This loop machine-parses unit-name+state, which needs an exact
+    # column format neither sup_status nor sup_list_workers guarantee
+    # (sup_list_workers on Linux omits --plain/--no-legend and adds --all,
+    # which would leak a legend line into the parse) — so the Linux branch
+    # keeps the original direct systemctl call verbatim (unchanged behavior),
+    # and macOS gets its own launchctl-shaped parse via sup_list_workers.
+    echo; echo "== agents =="
+    found=0
+    if [[ "$(farm_os)" == "macos" ]]; then
+      while read -r label pid; do
+        [[ -z "$label" ]] && continue
+        found=1
+        state="running"; [[ "$pid" == "-" ]] && state="stopped"
+        agent_activity "${label#"$LAUNCHD_PREFIX".worker.}" "$state"
+      done < <(sup_list_workers | awk '{print $NF, $1}')
+    else
+      while read -r unit state _; do
+        [[ -z "$unit" ]] && continue
+        found=1
+        agent_activity "$(instance_of_unit "$unit")" "$state"
+      done < <(systemctl --user list-units 'claude-farm@*' --plain --no-legend 2>/dev/null \
+                 | awk '{print $1, $3}')
+    fi
+    # `if`, not `(( found == 0 )) && echo`: the latter, as the LAST command in
+    # this case branch, makes its own (false, exit-1) test result become the
+    # case branch's — and thus farmctl's — exit status whenever an instance
+    # IS found (the common/healthy case). Pre-existing latent bug, surfaced
+    # by the new farmctl-status smoke test below; fixed here (output
+    # unchanged either way, only the exit code is corrected).
+    if (( found == 0 )); then echo "  (no claude-farm@ instances running)"; fi
+    ;;
+  logs)
+    sup_logs "${2:-}" ;;
+  tail)
+    FILE="$(resolve_tail_target "${2:-}")"
+    if [[ -z "$FILE" ]]; then
+      echo "farmctl tail: no log found for target '${2:-<newest>}' in $LOG_DIR" >&2
+      exit 1
+    fi
+    # The runner renders a distilled `.txt` companion live alongside each raw
+    # `.log` (FARM_LOG_FMT, see farm-runner.sh). If it exists, follow it
+    # directly — it is already formatted, so we skip jq entirely (cheaper, and
+    # exactly what cat/less would show). Otherwise (e.g. an old text-mode log,
+    # or a path passed explicitly) render the raw stream live via FARM_LOG_FMT.
+    READABLE="${FILE%.log}.txt"
+    if [[ "$FILE" == *.log && -f "$READABLE" ]]; then
+      echo "── tailing $READABLE (Ctrl-C to stop) ──" >&2
+      tail -n +1 -F "$READABLE"
+    else
+      echo "── tailing $FILE (Ctrl-C to stop) ──" >&2
+      # -F follows across rotation; -n +1 replays from the top so finished logs
+      # render fully too. jq --unbuffered keeps the feed live line-by-line.
+      tail -n +1 -F "$FILE" | jq -R --unbuffered -r "$FARM_LOG_FMT"
+    fi
+    ;;
+  dash)
+    SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    tmux kill-session -t farm 2>/dev/null || true
+    # board window: board TUI on the left, live agent feed on the right. On a
+    # 200x50 terminal a 60% board / 40% tail split keeps both readable; the
+    # right pane runs `farmctl tail` (newest-log mode) so live agent output sits
+    # next to the board. `|| true` so an empty log dir doesn't kill the pane.
+    tmux new-session  -d -s farm -n board "cd '$REPO_DIR' && kanban-md tui"
+    tmux split-window -t farm:board -h -p 40 "'$SELF' tail || read -r"
+    # logs window: sup_logs, via `farmctl logs` so it runs in-process with the
+    # right platform branch. On Linux this NARROWS the old command (which
+    # followed 'claude-farm@*' -u claude-scout -u claude-janitor — three
+    # units) to sup_logs' default of 'claude-farm@*' only (journalctl doesn't
+    # support multiple -u targets through the sup_* layer). Deliberately kept
+    # OS-branched here — rather than losing scout/janitor coverage on Linux —
+    # so `farmctl dash` keeps its exact prior Linux behavior; only macOS (no
+    # journalctl) is routed through sup_logs/farmctl logs. Flagged, not
+    # silently accepted.
+    if [[ "$(farm_os)" == "macos" ]]; then
+      tmux new-window -t farm -n logs "'$SELF' logs"
+    else
+      tmux new-window -t farm -n logs "journalctl --user -f -u 'claude-farm@*' -u claude-scout -u claude-janitor"
+    fi
+    tmux new-window   -t farm -n stats "watch -n 30 kanban-md --dir '$BOARD_DIR' board"
+    tmux select-window -t farm:board
+    tmux select-pane   -t farm:board.0
+    exec tmux attach -t farm
+    ;;
+  scout-now)
+    sup_scout_now ;;
+  audit)
+    echo "== farm security audit (verify, don't assert) =="
+    ok(){ echo "  PASS: $1"; }; warn(){ echo "  WARN: $1"; }
+    [[ -d "$HOME/.aws" || -n "${AWS_ACCESS_KEY_ID:-}" ]]       && warn "AWS credentials present on this box — confirm the IAM Deny boundary (Delete*/Terminate*/iam:*/purchasing) and the Budgets alert are real"       || ok "no AWS credentials found (strongest cloud guard)"
+    [[ -n "${ANTHROPIC_API_KEY:-}" ]]       && warn "ANTHROPIC_API_KEY is set — it overrides subscription auth in -p mode"       || ok "no ANTHROPIC_API_KEY in environment"
+    { grep -q '"agent-farm@' "$REPO_DIR/.claude/settings.json" 2>/dev/null || grep -rq guard-bash "$REPO_DIR/.claude/settings.json" 2>/dev/null; } \
+      && ok "guard hook active (plugin hooks.json or settings.json)" \
+      || warn "guard hook NOT wired — agents have no deterministic command firewall"
+    set +e
+    printf '{"tool_name":"Bash","tool_input":{"command":"aws s3 rb s3://x"}}'       | FARM_AGENT=1 "$FARM_DIR/hooks/guard-bash.sh" >/dev/null 2>&1
+    guard_rc=$?
+    set -e
+    [[ $guard_rc -eq 2 ]] && ok "guard hook functional (test deny fired)" || warn "guard hook did NOT deny a test command"
+    grep -qE '^[^#[:space:]]' "$(farm_resolve protected-paths.txt)" 2>/dev/null       && ok "protected-paths.txt has active rules" || warn "protected-paths.txt empty"
+    grep -q "TODO(operator)" "$(farm_resolve protected-paths.txt)" 2>/dev/null       && warn "protected-paths.txt still has TODO(operator) entries (add your project's safety-critical path globs)"
+    if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
+      ok "gh authenticated"
+      gh api user --jq .login 2>/dev/null | grep -qiE "farm|bot|machine"         || warn "gh identity does not look like a dedicated machine user — verify token scope (single repo, no admin)"
+    else warn "gh not authenticated"; fi
+    "$FARM_DIR/engine/tests/run.sh" >/dev/null 2>&1 && ok "farm test suite green" || warn "farm test suite FAILING"
+    ;;
+  doctor)
+    # Diagnoses why the farm might be doing NO work — especially the class of
+    # failure that fails SILENTLY: systemd units left pointing at a deleted
+    # REPO_DIR (a /tmp worktree GC'd) or a garbage-collected plugin cache path
+    # after a plugin update. Neither produces an obvious error; the farm just
+    # never picks up `ready` tasks. Guard every check so one failure never
+    # aborts the run (same tolerance discipline as `audit` above, under the
+    # inherited `set -euo pipefail`).
+    echo "== farm doctor — why is nothing happening? =="
+    DOCTOR_FAIL=0
+    ok(){ echo "  PASS: $1"; }
+    warn(){ echo "  WARN: $1"; }
+    fail(){ echo "  FAIL: $1"; DOCTOR_FAIL=1; }
+    if [[ "$(farm_os)" == "macos" ]]; then
+      UNIT_DIR="${UNIT_DIR:-$LAUNCHD_DIR}"
+    else
+      UNIT_DIR="${UNIT_DIR:-$HOME/.config/systemd/user}"
+    fi
+
+    # 1. Plugin engine reachable (farm-runner.sh, farm-lib.sh, guard hook).
+    ENGINE_OK=1
+    [[ -x "$FARM_BIN/farm-runner.sh" ]] \
+      || { fail "missing/non-executable $FARM_BIN/farm-runner.sh — re-run install.sh --init-project"; ENGINE_OK=0; }
+    [[ -f "$FARM_BIN/farm-lib.sh" ]] \
+      || { fail "missing $FARM_BIN/farm-lib.sh — re-run install.sh --init-project"; ENGINE_OK=0; }
+    [[ -x "$FARM_DIR/hooks/guard-bash.sh" ]] \
+      || { fail "missing/non-executable $FARM_DIR/hooks/guard-bash.sh — re-run install.sh --init-project"; ENGINE_OK=0; }
+    (( ENGINE_OK )) && ok "plugin engine reachable (farm-runner.sh, farm-lib.sh, guard-bash.sh present)"
+
+    if [[ "$(farm_os)" == "macos" ]]; then
+      # 2. launchd plist units exist.
+      UNIT_COUNT=0
+      for _f in "$UNIT_DIR/$LAUNCHD_PREFIX".worker.*.plist; do
+        [[ -e "$_f" ]] && UNIT_COUNT=$(( UNIT_COUNT + 1 ))
+      done
+      if (( UNIT_COUNT > 0 )); then
+        ok "launchd worker plists installed ($UNIT_COUNT $LAUNCHD_PREFIX.worker.*.plist)"
+      else
+        warn "no farm plists installed in $UNIT_DIR — run install.sh --init-project then farmctl start"
+      fi
+
+      # 3. THE STALE-UNIT CHECK, launchd shape: presence + what launchctl
+      # itself reports loaded. (Deep REPO_DIR/ExecStart XML-plist staleness
+      # parsing, as done for the systemd template below, is intentionally out
+      # of scope here per the Task 14 brief — presence + `launchctl list`
+      # only.)
+      PLIST_COUNT=0
+      for _f in "$UNIT_DIR/$LAUNCHD_PREFIX".*.plist; do
+        [[ -e "$_f" ]] && PLIST_COUNT=$(( PLIST_COUNT + 1 ))
+      done
+      if (( PLIST_COUNT > 0 )); then
+        ok "launchd plist files present in $UNIT_DIR ($PLIST_COUNT $LAUNCHD_PREFIX.*.plist)"
+      else
+        warn "no $LAUNCHD_PREFIX.*.plist files found in $UNIT_DIR — run install.sh --init-project then farmctl start"
+      fi
+      if command -v launchctl >/dev/null 2>&1; then
+        LOADED_COUNT="$(launchctl list 2>/dev/null | grep -c "$LAUNCHD_PREFIX" || true)"
+        [[ "$LOADED_COUNT" =~ ^[0-9]+$ ]] || LOADED_COUNT=0
+        if (( LOADED_COUNT > 0 )); then
+          ok "launchctl reports $LOADED_COUNT loaded $LAUNCHD_PREFIX job(s)"
+        else
+          warn "launchctl reports no loaded $LAUNCHD_PREFIX jobs — farm may not be running"
+        fi
+      else
+        warn "launchctl not found on PATH — cannot verify loaded jobs"
+      fi
+      UNIT_REPO_DIR=""
+      UNIT_EXEC_DIR=""
+    else
+      # 2. systemd units exist.
+      UNIT_COUNT=0
+      if command -v systemctl >/dev/null 2>&1; then
+        UNIT_COUNT="$(systemctl --user list-units --all 'claude-farm@*' --no-legend 2>/dev/null | grep -c . || true)"
+      fi
+      [[ "$UNIT_COUNT" =~ ^[0-9]+$ ]] || UNIT_COUNT=0
+      if (( UNIT_COUNT > 0 )); then
+        ok "systemd farm units installed ($UNIT_COUNT claude-farm@* unit(s))"
+      else
+        warn "no farm units installed — run install.sh --init-project then farmctl start"
+      fi
+
+      # 3. THE STALE-UNIT CHECK — the exact bug we hit. Read the substituted
+      # template unit for the baked REPO_DIR / plugin bin path; fall back to a
+      # live systemctl instance if the file isn't present.
+      UNIT_TEMPLATE="$UNIT_DIR/claude-farm@.service"
+      UNIT_REPO_DIR=""
+      UNIT_EXEC_DIR=""
+      if [[ -f "$UNIT_TEMPLATE" ]]; then
+        UNIT_REPO_DIR="$(grep -oE '^Environment=REPO_DIR=.*' "$UNIT_TEMPLATE" 2>/dev/null | head -1 | sed 's/^Environment=REPO_DIR=//')" || true
+        UNIT_EXEC_DIR="$(grep -oE '^ExecStart=.*/farm-runner\.sh' "$UNIT_TEMPLATE" 2>/dev/null | head -1 | sed -E 's#^ExecStart=(.*)/farm-runner\.sh#\1#')" || true
+      elif command -v systemctl >/dev/null 2>&1; then
+        SHOW_ENV="$(systemctl --user show claude-farm@implementer-1.service -p Environment 2>/dev/null || true)"
+        UNIT_REPO_DIR="$(printf '%s\n' "$SHOW_ENV" | grep -oE 'REPO_DIR=[^ ]*' | head -1 | sed 's/^REPO_DIR=//')" || true
+      fi
+
+      if [[ -n "$UNIT_REPO_DIR" ]]; then
+        if farm_unit_repo_dir_stale "$UNIT_REPO_DIR"; then
+          fail "systemd units point at a non-existent REPO_DIR ($UNIT_REPO_DIR) — stale from a prior run; re-run install.sh --init-project <your-repo>"
+        else
+          ok "systemd units point at an existing REPO_DIR ($UNIT_REPO_DIR)"
+        fi
+      else
+        warn "could not determine installed units' REPO_DIR — skipping REPO_DIR staleness check (is the farm installed?)"
+      fi
+
+      if [[ -n "$UNIT_EXEC_DIR" ]]; then
+        if [[ -f "$UNIT_EXEC_DIR/farm-runner.sh" ]]; then
+          ok "systemd ExecStart points at an existing plugin path ($UNIT_EXEC_DIR)"
+        else
+          fail "systemd ExecStart points at a missing plugin path ($UNIT_EXEC_DIR) — the plugin was updated and the old cache was garbage-collected; re-run install.sh --init-project"
+        fi
+      else
+        warn "could not determine installed units' ExecStart plugin path — skipping ExecStart staleness check"
+      fi
+    fi
+
+    # 4. REPO_DIR agreement — units vs. the repo farmctl is operating on now.
+    if [[ -n "$UNIT_REPO_DIR" ]]; then
+      if [[ "$UNIT_REPO_DIR" == "$REPO_DIR" ]]; then
+        ok "installed units' REPO_DIR agrees with the repo farmctl is operating on ($REPO_DIR)"
+      else
+        warn "units target $UNIT_REPO_DIR but farmctl is operating on $REPO_DIR — you may be running doctor from a different repo"
+      fi
+    fi
+
+    # 5. Tooling present.
+    for _tool in kanban-md claude git; do
+      if command -v "$_tool" >/dev/null 2>&1; then
+        ok "$_tool found on PATH"
+      else
+        fail "$_tool NOT found on PATH — the farm cannot run without it"
+      fi
+    done
+    if command -v gh >/dev/null 2>&1; then
+      ok "gh found on PATH"
+    else
+      warn "gh NOT found on PATH — PR/CI operations will fail"
+    fi
+
+    # 6. Board reachable.
+    if [[ -d "$BOARD_DIR" ]]; then
+      set +e
+      kanban-md --dir "$BOARD_DIR" list >/dev/null 2>&1
+      kb_rc=$?
+      set -e
+      if [[ $kb_rc -eq 0 ]]; then
+        ok "board reachable ($BOARD_DIR)"
+      else
+        fail "kanban-md list failed against $BOARD_DIR (rc=$kb_rc) — board unreadable"
+      fi
+    else
+      fail "BOARD_DIR ($BOARD_DIR) does not exist — has install.sh been run for this repo?"
+    fi
+
+    # 7. THE SILENT-STALL SYMPTOM — ready tasks with nobody to pick them up.
+    READY_COUNT=0
+    if [[ -d "$BOARD_DIR" ]]; then
+      READY_COUNT="$(kanban-md --dir "$BOARD_DIR" list --status ready --json 2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
+    fi
+    [[ "$READY_COUNT" =~ ^[0-9]+$ ]] || READY_COUNT=0
+
+    ACTIVE_IMPL=0
+    if [[ "$(farm_os)" == "macos" ]]; then
+      if command -v launchctl >/dev/null 2>&1; then
+        ACTIVE_IMPL="$(launchctl list 2>/dev/null | grep "$LAUNCHD_PREFIX.worker.implementer" | awk '$1 != "-" { c++ } END { print c+0 }' || true)"
+      fi
+    else
+      if command -v systemctl >/dev/null 2>&1; then
+        ACTIVE_IMPL="$(systemctl --user list-units 'claude-farm@implementer-*' --no-legend --state=active 2>/dev/null | grep -c . || true)"
+      fi
+    fi
+    [[ "$ACTIVE_IMPL" =~ ^[0-9]+$ ]] || ACTIVE_IMPL=0
+
+    if (( READY_COUNT > 0 && ACTIVE_IMPL == 0 )); then
+      warn "$READY_COUNT task(s) in 'ready' but NO implementer is running — start the farm with 'farmctl start'"
+    else
+      ok "no silent-stall symptom ($READY_COUNT ready task(s), $ACTIVE_IMPL active implementer(s))"
+    fi
+
+    # 8. Config resolution sanity.
+    for _cfg in FARM.md protected-paths.txt; do
+      RESOLVED="$(farm_resolve "$_cfg" 2>/dev/null || true)"
+      if [[ -n "$RESOLVED" && -f "$RESOLVED" ]]; then
+        ok "farm_resolve $_cfg -> $RESOLVED"
+      else
+        fail "farm_resolve $_cfg did not resolve to an existing file"
+      fi
+    done
+
+    echo
+    if (( DOCTOR_FAIL )); then
+      echo "== doctor: FAIL — see FAIL lines above =="
+      exit 1
+    else
+      echo "== doctor: OK — no FAILs (see any WARN lines for soft issues) =="
+    fi
+    ;;
+  metrics)
+    F="$STATE_DIR/metrics/usage.jsonl"
+    if [[ ! -f "$F" ]]; then echo "no token metrics recorded yet ($F)"; exit 0; fi
+    echo "== farm token metrics — $(wc -l < "$F" 2>/dev/null || echo 0) sessions ($F) =="
+    echo "-- by role (out avg = the autonomous-narration optimisation target) --"
+    jq -s -r '
+      group_by(.role)[]
+      | "  \(.[0].role): \(length) sessions · out avg \((map(.out // 0)|add)/length|floor)"
+        + " (out total \(map(.out // 0)|add)) · in total \(map(.in // 0)|add)"
+        + " · $\(((map(.cost_usd // 0)|add)*100|round)/100)"
+    ' "$F" 2>/dev/null || echo "  (metrics file unparseable)"
+    echo "-- by tier --"
+    jq -s -r 'group_by(.tier)[] | "  tier:\(.[0].tier): \(length) sessions · out avg \((map(.out // 0)|add)/length|floor)"' "$F" 2>/dev/null || true
+    ;;
+  *)
+    sed -n '2,19p' "$0"; exit 1 ;;
+esac

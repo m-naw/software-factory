@@ -1,0 +1,62 @@
+[
+  {
+    "id": "docs/superpowers/plans/example.md#M1",
+    "plan": "docs/superpowers/plans/example.md",
+    "unit": "M1",
+    "title": "Greeting",
+    "status": "shipped",
+    "depends_on": [],
+    "claimed_by": null,
+    "stop_reason": null,
+    "prs": [12, 13],
+    "handoff_path": "docs/superpowers/handoffs/example-m1-handoff.md",
+    "attempts": {"sessions": 1, "rework": 0, "continuation": 0, "interruption": 0},
+    "owner_ref": null,
+    "usage": {"sessions": 2, "in": 1200, "out": 800, "cache_read": 50000, "cache_creation": 4000, "cost_usd": 1.25, "wall_s": 3600}
+  },
+  {
+    "id": "docs/superpowers/plans/example.md#M2",
+    "plan": "docs/superpowers/plans/example.md",
+    "unit": "M2",
+    "title": "Farewell",
+    "status": "doing",
+    "depends_on": ["docs/superpowers/plans/example.md#M1"],
+    "claimed_by": "build-host:4242",
+    "stop_reason": null,
+    "prs": [14],
+    "handoff_path": "docs/superpowers/handoffs/example-m2-handoff.md",
+    "attempts": {"sessions": 2, "rework": 0, "continuation": 1, "interruption": 0},
+    "owner_ref": null,
+    "usage": {"sessions": 2, "in": 900, "out": 400, "cache_read": 30000, "cache_creation": 2000, "cost_usd": 0.75, "wall_s": 2400}
+  },
+  {
+    "id": "docs/superpowers/plans/example.md#M3",
+    "plan": "docs/superpowers/plans/example.md",
+    "unit": "M3",
+    "title": "Logging",
+    "status": "escalated",
+    "depends_on": ["docs/superpowers/plans/example.md#M1"],
+    "claimed_by": null,
+    "stop_reason": "verify command failed on origin/main",
+    "prs": [],
+    "handoff_path": "docs/superpowers/handoffs/example-m3-handoff.md",
+    "attempts": {"sessions": 3, "rework": 1, "continuation": 0, "interruption": 1},
+    "owner_ref": null,
+    "usage": {"sessions": 3, "in": 1500, "out": 600, "cache_read": 40000, "cache_creation": 3000, "cost_usd": 1.5, "wall_s": 5400}
+  },
+  {
+    "id": "docs/superpowers/plans/example.md#M4",
+    "plan": "docs/superpowers/plans/example.md",
+    "unit": "M4",
+    "title": "Release",
+    "status": "backlog",
+    "depends_on": ["docs/superpowers/plans/example.md#M2", "docs/superpowers/plans/example.md#M3"],
+    "claimed_by": null,
+    "stop_reason": null,
+    "prs": [],
+    "handoff_path": "docs/superpowers/handoffs/example-m4-handoff.md",
+    "attempts": {"sessions": 0, "rework": 0, "continuation": 0, "interruption": 0},
+    "owner_ref": null,
+    "usage": {"sessions": 0, "in": 0, "out": 0, "cache_read": 0, "cache_creation": 0, "cost_usd": 0, "wall_s": 0}
+  }
+]

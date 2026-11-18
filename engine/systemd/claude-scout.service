@@ -1,0 +1,11 @@
+[Unit]
+Description=Claude farm scout sweep (one bounded run)
+
+[Service]
+Type=oneshot
+ExecStart=@FARM_BIN@/farm-scout.sh
+Environment=REPO_DIR=@REPO_DIR@
+WorkingDirectory=@REPO_DIR@
+Nice=15
+RuntimeMaxSec=3600   # hard cap: systemd kills the whole sweep cgroup after 1h
+Environment=NO_COLOR=1

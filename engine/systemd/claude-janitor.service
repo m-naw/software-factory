@@ -1,0 +1,9 @@
+[Unit]
+Description=Claude farm janitor (requeue orphans, prune worktrees)
+
+[Service]
+Type=oneshot
+ExecStart=@FARM_BIN@/farm-janitor.sh
+Environment=REPO_DIR=@REPO_DIR@
+WorkingDirectory=@REPO_DIR@
+Environment=NO_COLOR=1
