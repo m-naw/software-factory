@@ -1095,7 +1095,7 @@ case "$TOOL" in
       && deny "repo administration via gh is off-limits (secrets, workflows, protection, deletion). Escalate (move the task to 'escalated')."
 
     # --- self-tampering: the farm must not weaken its own rails ------------
-    grep -qE '(^|[;&|[:space:]])(rm|mv|cp|sed|tee|truncate)[^|;&]*((\.claude/settings)|((agent-farm|software-factory)/(hooks|bin|systemd|launchd))|(/hooks/guard-bash\.sh)|(\.agent-farm/(protected-paths|farm\.env))|(\.github/workflows)|CODEOWNERS)' <<<"$CMD" \
+    grep -qE '(^|[;&|[:space:]])(rm|mv|cp|sed|tee|truncate)[^|;&]*((\.claude/settings)|((agent-farm|software-factory)/([0-9][^/[:space:]]*/)?(hooks|bin|systemd|launchd))|(/hooks/guard-bash\.sh)|(\.agent-farm/(protected-paths|farm\.env))|(\.github/workflows)|CODEOWNERS)' <<<"$CMD" \
       && deny "guard/CI/farm configuration is read-only for agents. If a task genuinely requires changing it, escalate (move the task to 'escalated')."
     # The verb-anchored rule above only catches commands that START with rm|mv|
     # cp|sed|tee|truncate — a shell redirection (`echo x > protected-paths.txt`)
@@ -1144,7 +1144,7 @@ case "$TOOL" in
     # Anchor protected segments to a path boundary (^ or /) rather than a literal
     # leading slash, so a RELATIVE file_path (e.g. `.agent-farm/protected-paths.txt`)
     # is caught too — "fails closed", not "fails closed only for absolute paths".
-    grep -qE '(\.claude/settings(\.local)?\.json$)|((^|/)(agent-farm|software-factory)/(hooks|bin|systemd|launchd)/)|((^|/)hooks/guard-bash\.sh$)|((^|/)\.agent-farm/(protected-paths\.txt|farm\.env|prompts)/?)|(\.github/workflows/)|(CODEOWNERS$)' <<<"$FP" \
+    grep -qE '(\.claude/settings(\.local)?\.json$)|((^|/)(agent-farm|software-factory)/([0-9][^/]*/)?(hooks|bin|systemd|launchd)/)|((^|/)hooks/guard-bash\.sh$)|((^|/)\.agent-farm/(protected-paths\.txt|farm\.env|prompts)/?)|(\.github/workflows/)|(CODEOWNERS$)' <<<"$FP" \
       && deny "protected path ($FP): guard, farm internals/config, CI workflows and CODEOWNERS are not editable by agents. Escalate (move the task to 'escalated') if the task requires it."
 
     # --- worktree confinement ----------------------------------------------

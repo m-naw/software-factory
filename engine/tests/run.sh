@@ -168,6 +168,15 @@ t_reason "software-factory plugin Write denial names the reason" 2 "FARM_AGENT=1
 t "software-factory plugin rm via bash blocked" 2 "$(bash_cmd 'rm /p/software-factory/bin/farm-lib.sh')"
 t "software-factory plugin sed via bash blocked" 2 "$(bash_cmd 'sed -i s/x/y/ /p/software-factory/hooks/hooks.sh')"
 t_reason "software-factory plugin bash denial names the reason" 2 "FARM_AGENT=1" "$(bash_cmd 'mv /p/software-factory/systemd/a /tmp/a')" 'guard/CI/farm configuration is read-only for agents\. If a task'
+# The installed plugin sits under a version folder: cache/<marketplace>/<plugin>/<version>/...
+t "plugin cache path (version folder) Write blocked" 2 '{"tool_name":"Write","tool_input":{"file_path":"/home/u/.claude/plugins/cache/software-factory/software-factory/0.4.0/bin/farmctl"}}'
+t_reason "plugin cache path Write denial names the reason" 2 "FARM_AGENT=1" '{"tool_name":"Write","tool_input":{"file_path":"/home/u/.claude/plugins/cache/software-factory/software-factory/0.4.0/bin/farmctl"}}' 'protected path \(/home/u/\.claude/plugins/cache/software-factory/'
+t "old plugin cache path (version folder) Edit blocked" 2 '{"tool_name":"Edit","tool_input":{"file_path":"/home/u/.claude/plugins/cache/agent-farm-tools/agent-farm/0.3.0/hooks/hooks.json"}}'
+t_reason "old plugin cache path Edit denial names the reason" 2 "FARM_AGENT=1" '{"tool_name":"Edit","tool_input":{"file_path":"/home/u/.claude/plugins/cache/agent-farm-tools/agent-farm/0.3.0/hooks/hooks.json"}}' 'protected path \(/home/u/\.claude/plugins/cache/agent-farm-tools/'
+t "plugin cache path (version folder) rm via bash blocked" 2 "$(bash_cmd 'rm /home/u/.claude/plugins/cache/software-factory/software-factory/0.4.0/bin/farmctl')"
+t_reason "plugin cache path rm denial names the reason" 2 "FARM_AGENT=1" "$(bash_cmd 'rm /home/u/.claude/plugins/cache/software-factory/software-factory/0.4.0/bin/farmctl')" 'guard/CI/farm configuration is read-only for agents\. If a task'
+t "project path with a version-like folder stays writable" 0 '{"tool_name":"Write","tool_input":{"file_path":"/r/docs/agent-farm/0.4.0/notes.md"}}'
+t "project path under software-factory/<version> stays writable" 0 '{"tool_name":"Write","tool_input":{"file_path":"/r/src/software-factory/1.2/readme.md"}}'
 
 # ------------------------------------------------------- scoping (FARM_AGENT) -
 # The guard governs farm agents only. Non-farm sessions (operator/dev and their
