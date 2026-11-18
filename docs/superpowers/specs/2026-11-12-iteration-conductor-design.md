@@ -3,7 +3,7 @@
 Date: 2026-11-12. Status: fourth draft. Part I is scoped to what a final independent review
 called ready for planning. Part II is direction only and is not to be planned from this document.
 
-Scope: `agent-farm` (this repo) and a planning consumer of its contract.
+Scope: `software-factory` (this repo, formerly agent-farm) and a planning consumer of its contract.
 
 History. Draft 1 improved the ticket mill; an independent review judged it unsound. Draft 2 was a
 thin serial conductor; the operator rejected it as slimming with no stated gain. Draft 3 answered

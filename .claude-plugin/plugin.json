@@ -1,8 +1,8 @@
 {
-  "name": "agent-farm",
-  "displayName": "Autonomous Agent Farm",
-  "version": "0.3.0",
-  "description": "File-based kanban + systemd (Linux) / launchd (macOS) supervision for an autonomous multi-agent dev farm: engine, coordination skills, a bash safety hook, and governance templates.",
+  "name": "software-factory",
+  "displayName": "Software Factory",
+  "version": "0.4.0",
+  "description": "Software Factory: run Claude Code agents on your repository — a plan conductor (one lead and one review session per unit) and a file-based kanban farm under systemd (Linux) / launchd (macOS) supervision, with coordination skills, a bash safety hook, and governance templates.",
   "author": { "name": "m-naw" },
   "license": "MIT",
   "keywords": ["agents", "kanban", "automation", "systemd", "launchd", "orchestration"]

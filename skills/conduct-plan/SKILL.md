@@ -35,7 +35,7 @@ Copy `templates/plan-template.md` and fit the plan to it:
 4. `Depends-on: M1, M2` must be the first non-blank line under the unit heading; anywhere else it is ignored and
    the unit depends on the previous one. `Depends-on: none` makes a unit independent.
 5. One unit fits one session. No unit changes what the guard's self-tampering rules (`hooks/guard-bash.sh`) block
-   agents from writing: `.github/workflows/`, `CODEOWNERS`, `.claude/settings*`, `.agent-farm/protected-paths.txt`, `.agent-farm/farm.env`, `.agent-farm/prompts/`, `hooks/guard-bash.sh`, `hooks/hooks.json`, `agent-farm/(hooks|bin|systemd|launchd)/`, and the launchd units (`engine/launchd/`, `com.agent-farm.*.plist`).
+   agents from writing: `.github/workflows/`, `CODEOWNERS`, `.claude/settings*`, `.agent-farm/protected-paths.txt`, `.agent-farm/farm.env`, `.agent-farm/prompts/`, `hooks/guard-bash.sh`, `hooks/hooks.json`, `agent-farm/` or `software-factory/(hooks|bin|systemd|launchd)/`, and the launchd units (`engine/launchd/`, `com.agent-farm.*.plist`).
    Put such a change in the handoff's operator actions.
 6. No `## M...` heading in a fenced code block, except as an example.
 

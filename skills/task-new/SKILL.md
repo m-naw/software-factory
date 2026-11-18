@@ -6,7 +6,7 @@ description: >
   Context pointers. Use whenever the user wants to add a task/ticket to the
   board, says "add this to the backlog", "create a task for…", "make a
   ticket", or when an agent needs to file a new non-bug work item. Invocable
-  as /agent-farm:task-new <description>.
+  as /software-factory:task-new <description>.
 allowed-tools:
   - Bash(kanban-md *)
   - Bash(kbmd *)
@@ -23,7 +23,7 @@ Process:
    `${CLAUDE_PLUGIN_ROOT}/templates/task-template.md` (the plugin ships this
    template alongside its skills, so the path always resolves regardless of
    cwd or worktree). Fill EVERY section of that template, and apply the
-   `agent-farm:task-authoring` skill's quality bar.
+   `software-factory:task-authoring` skill's quality bar.
 2. Investigate the codebase briefly (graphify report, key files) so Context
    pointers are real file:line references, not guesses.
 3. If $ARGUMENTS is too thin to write testable Acceptance Criteria, ask the

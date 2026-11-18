@@ -1,4 +1,4 @@
-# CLAUDE.md — working in the agent-farm repo
+# CLAUDE.md — working in the software-factory repo
 
 Guidance for contributors and for Claude sessions editing **this repository** (the plugin
 source). It is not injected into running farm agents — that is `defaults/FARM.md`. Do not
@@ -27,7 +27,7 @@ hooks/      guard-bash.sh + hooks.json (the PreToolUse command firewall)
 engine/     install.sh, systemd/ (user units), tests/ (the safety suite)
 defaults/   generic config injected at runtime — FARM.md, farm.env, protected-paths.txt, prompts/
 templates/  per-project scaffolds the installer copies into an adopting repo
-skills/     the agent-farm:* skills (namespaced SKILL.md files)
+skills/     the software-factory:* skills (namespaced SKILL.md files)
 contract/   what `farmctl conduct` reads and writes (README.md) and its fixtures
 ```
 

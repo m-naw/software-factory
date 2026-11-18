@@ -19,7 +19,7 @@ write tasks is superpowers:writing-plans' job. Delete this comment block when yo
   the operator merges. Run `farmctl conduct lint <plan>`: it must exit 0 first.
 - One unit (`## M1 ...`, `## PR 3`, `## Iteration 2`) fits one session. Split it if it does not.
 - A unit never requires a change to what the guard's self-tampering rules (hooks/guard-bash.sh) block agents
-  from writing: .github/workflows/, CODEOWNERS, .claude/settings*, .agent-farm/protected-paths.txt, .agent-farm/farm.env, .agent-farm/prompts/, hooks/guard-bash.sh, hooks/hooks.json, agent-farm/(hooks|bin|systemd|launchd)/, and the launchd units (engine/launchd/, com.agent-farm.*.plist).
+  from writing: .github/workflows/, CODEOWNERS, .claude/settings*, .agent-farm/protected-paths.txt, .agent-farm/farm.env, .agent-farm/prompts/, hooks/guard-bash.sh, hooks/hooks.json, agent-farm/ or software-factory/(hooks|bin|systemd|launchd)/, and the launchd units (engine/launchd/, com.agent-farm.*.plist).
   List such a change as an operator action, outside any unit's tasks.
 - No `## M...` heading inside a fenced code block, except as an example: the parser is fence-aware,
   but readers are not.

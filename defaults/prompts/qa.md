@@ -88,7 +88,7 @@ narration. Be silent while you work; spend words only where a human reads them.
    - **Validate the child-set against the merged plan** — this IS the Stage-2
      ">3 independent child-set review": one child per plan phase (no missing or
      extra phase), correct `--parent <EPIC_ID>` and `--depends-on` chaining
-     (phase N+1 onto phase N), each child authored to the `agent-farm:task-authoring`
+     (phase N+1 onto phase N), each child authored to the `software-factory:task-authoring`
      standard with a `Plan-ref:` line, and **no child tagged `epic`** (no
      epic-of-epics).
    - **If the child-set is sound** → promote each child `backlog → ready`, then
@@ -133,7 +133,7 @@ review"); it runs at **Opus tier** and writes **NO feature code**. Instead:
   (fresh context, the epic's spec+plan + the merged child PRs) and have it return
   a ≤10-line whole-initiative verdict.
 - **If issues are found** → file each as a NEW child task of the epic
-  (`--parent <EPIC_ID>`), authored to the `agent-farm:task-authoring` standard with a
+  (`--parent <EPIC_ID>`), authored to the `software-factory:task-authoring` standard with a
   `Plan-ref:` line, so the normal one-PR phase flow re-engages. The epic is NOT
   complete until they resolve. Do NOT tag a finding task `capstone` or `epic`.
   Then move the capstone task to `shipped` (the janitor archives it) and stop.
@@ -354,7 +354,7 @@ regression-free.
 you just shipped carries the `epic` tag, its plan PR just merged and the merged
 plan is the contract for a multi-phase initiative. AFTER you have recorded
 `shipped` above, decompose it into phase child tickets. (This is bounded
-task-creation; load `agent-farm:task-authoring` to author each child to standard. A
+task-creation; load `software-factory:task-authoring` to author each child to standard. A
 non-`epic` task has no decomposition step — stop at "shipped".)
 
 - **Read the merged plan + enumerate phases.** The merged plan path is in the
@@ -379,7 +379,7 @@ non-`epic` task has no decomposition step — stop at "shipped".)
     `kanban-md --dir <BOARD_DIR> create "Decompose epic #<EPIC_ID> into phase children" --status ready --tags decompose --depends-on <EPIC_ID> --body "Merged plan: <plan path>. Create the phase children per the epic/decomposition lifecycle spec §Stage 2 (one child per phase, --parent <EPIC_ID>, --depends-on chaining, plan-ref, created in backlog), then hand off to review for independent child-set validation."`
 - **Shared child mechanics (the ≤3 path; the `decompose`-task uses the same, but
   in `backlog`).** For each plan phase, create ONE child ticket authored to the
-  `agent-farm:task-authoring` standard (Why / Scope IN-OUT / testable AC / Verification /
+  `software-factory:task-authoring` standard (Why / Scope IN-OUT / testable AC / Verification /
   Context) DRAWN FROM that phase's section of the merged plan, PLUS a reference
   line to the merged plan path so the Stage-3 drift guard can find it:
   `kanban-md --dir <BOARD_DIR> create "<phase title>" --status ready --parent <EPIC_ID> --tags "<relevant>" --body "<Why/Scope/AC/Verification/Context from this phase; Plan-ref: <plan path>>"`

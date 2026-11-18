@@ -1,7 +1,10 @@
-# Agent Farm
+# Software Factory
 
-An installable [Claude Code](https://docs.claude.com/en/docs/claude-code) plugin for running coding
-agents on your repository, on a Claude subscription (not API billing). It has two ways of working:
+Software Factory is an installable [Claude Code](https://docs.claude.com/en/docs/claude-code) plugin
+for running coding agents on your repository, on a Claude subscription (not API billing). It was
+called agent-farm before 0.4.0. Paths, commands and environment variables still use the agent-farm/farm
+names (`.agent-farm/`, `farmctl`, `FARM_*`); renaming them is planned with a migration. It has two
+ways of working:
 
 - **The conductor (`farmctl conduct`) — use this.** You write a spec and a plan; the conductor carries
   the plan's units one at a time: a lead session implements and merges its code after the required
@@ -30,18 +33,20 @@ One-time setup of a repository (details in [Conducting a plan](#conducting-a-pla
    design.
 2. **Plugin.** Install it (see [Install](#install--two-steps)); after every update, check the cache
    against the checkout with `diff -r` (updates are keyed on the plugin version).
-3. **Repository config.** Run `agent-farm:agent-farm-init` (it also sets up the board farm's board
-   and supervision units, which the conductor does not use; leave them stopped), then commit
-   `.agent-farm/farm.env` with a `FARM_VERIFY_CMD` that passes from a clean clone (your test command)
-   and a project `CLAUDE.md`. The installer adds `.farm-worktrees/` and `.agent-farm/state/` to
-   `.gitignore`.
+3. **Repository config.** Run `software-factory:agent-farm-init` and choose conductor only, or run
+   the installer yourself:
+   `"${CLAUDE_PLUGIN_ROOT}"/engine/install.sh --init-project <repo> --conductor-only --verify-cmd '<your test command>'`.
+   It writes only `.agent-farm/farm.env` (`FARM_VERIFY_CMD`, which must pass from a clean clone) and
+   adds `.farm-worktrees/` and `.agent-farm/state/` to `.gitignore`: no board, no supervision units,
+   no `kanban-md`. Commit both files, with a project `CLAUDE.md`, by pull request. (The full init in
+   [Install](#install--two-steps) sets up the board farm.)
 4. **Notifications.** Set `FARM_NOTIFY_CMD` in your own environment (never in the repository): see
    [Notifications](#notifications).
 
 For each piece of work:
 
 1. **Spec**, with `superpowers:brainstorming`, under `docs/superpowers/specs/`.
-2. **Plan**, with `superpowers:writing-plans`, then the `agent-farm:conduct-plan` skill and
+2. **Plan**, with `superpowers:writing-plans`, then the `software-factory:conduct-plan` skill and
    [`templates/plan-template.md`](templates/plan-template.md) for the conductor's format: units
    (`## M1 — …`), a `**Spec:**` link, the handoff sections. The plan lives under
    `docs/superpowers/plans/`.
@@ -157,11 +162,11 @@ Installing the plugin gives you the tooling. It does **not** start a farm. You n
 
 ```text
 /plugin marketplace add m-naw/software-factory
-/plugin install agent-farm@agent-farm-tools
+/plugin install software-factory@software-factory
 ```
 
-`agent-farm` is the plugin; `agent-farm-tools` is its marketplace. If the repo is private, your
-`git`/`gh` must be authenticated to it. This step provides the skills (`agent-farm:*`), the guard
+`software-factory` is both the plugin and its marketplace. If the repo is private, your
+`git`/`gh` must be authenticated to it. This step provides the skills (`software-factory:*`), the guard
 hook, the engine scripts, and the `FARM.md` default.
 
 ### Step 2 — bootstrap the farm in your repo (running infrastructure)
@@ -170,7 +175,7 @@ Inside Claude Code, from your project, run the init skill (recommended — it re
 path for you):
 
 ```text
-/agent-farm:agent-farm-init
+/software-factory:agent-farm-init
 ```
 
 Or run the installer directly. Inside Claude Code the plugin path is `${CLAUDE_PLUGIN_ROOT}`:
@@ -276,8 +281,8 @@ external triage layer; the farm doesn't care which) and `archived` (terminal).
 > carrying the old status). Implementers own a task in `doing` via a claim; QA owns `review`
 (CI, in-place fixes, squash-merge); the janitor archives shipped+merged tasks.
 
-To drive the farm as the operator, use the `agent-farm:farm-orchestration` skill. To file work,
-use `agent-farm:task-new` / `agent-farm:bug-new` (or `/agent-farm:task-new <description>`).
+To drive the farm as the operator, use the `software-factory:farm-orchestration` skill. To file work,
+use `software-factory:task-new` / `software-factory:bug-new` (or `/software-factory:task-new <description>`).
 
 ## Conducting a plan
 
@@ -288,7 +293,7 @@ markdown file on the default branch; each level-2 heading such as `## M1 — Gre
 answer when it stops.
 
 To write a plan the conductor accepts, start from [`templates/plan-template.md`](templates/plan-template.md)
-and the `agent-farm:conduct-plan` skill (a format adapter; the planning itself stays with
+and the `software-factory:conduct-plan` skill (a format adapter; the planning itself stays with
 `superpowers:writing-plans`). A plan pull request merges only after `farmctl conduct lint` exits 0.
 
 **What one unit run does**
@@ -596,21 +601,21 @@ rm -f ~/Library/LaunchAgents/com.agent-farm.*.plist
 
 Then remove the per-project config with `rm -rf .agent-farm/` in your repo (this deletes the board
 state and logs — archive them first if you want the history). Uninstall the plugin itself from
-Claude Code with `/plugin uninstall agent-farm@agent-farm-tools`.
+Claude Code with `/plugin uninstall software-factory@software-factory`.
 
 ## Skills provided
 
 | Skill | Purpose |
 | --- | --- |
-| `agent-farm:agent-farm-init` | Scaffold farm config + governance into the current repo (run once per project). |
-| `agent-farm:farm-orchestration` | Operate the farm as the human-facing orchestrator: health, filing work, escalations, merges. |
-| `agent-farm:task-new` | Create a well-formed feature/chore task (Acceptance Criteria, Scope IN/OUT, verification). |
-| `agent-farm:bug-new` | File a well-formed bug with reproduction, evidence, and a failing-test-first criterion. |
-| `agent-farm:task-authoring` | Write high-quality tickets that autonomous agents can execute without follow-up questions. |
-| `agent-farm:conduct-plan` | Give a plan written with `superpowers:writing-plans` the format `farmctl conduct` reads, then lint it. |
-| `agent-farm:requesting-pr-revision` | Send a task that already has a PR back for more implementer work on its branch. |
-| `agent-farm:kanban-md` | Manage tasks on the file-based `kanban-md` board (create, list, move, edit). |
-| `agent-farm:kanban-based-development` | Parallel-safe multi-agent development workflow with explicit handoffs. |
+| `software-factory:agent-farm-init` | Scaffold farm config + governance into the current repo (run once per project). |
+| `software-factory:farm-orchestration` | Operate the farm as the human-facing orchestrator: health, filing work, escalations, merges. |
+| `software-factory:task-new` | Create a well-formed feature/chore task (Acceptance Criteria, Scope IN/OUT, verification). |
+| `software-factory:bug-new` | File a well-formed bug with reproduction, evidence, and a failing-test-first criterion. |
+| `software-factory:task-authoring` | Write high-quality tickets that autonomous agents can execute without follow-up questions. |
+| `software-factory:conduct-plan` | Give a plan written with `superpowers:writing-plans` the format `farmctl conduct` reads, then lint it. |
+| `software-factory:requesting-pr-revision` | Send a task that already has a PR back for more implementer work on its branch. |
+| `software-factory:kanban-md` | Manage tasks on the file-based `kanban-md` board (create, list, move, edit). |
+| `software-factory:kanban-based-development` | Parallel-safe multi-agent development workflow with explicit handoffs. |
 
 ## Layout & further reading
 
@@ -620,7 +625,7 @@ hooks/      guard-bash.sh + hooks.json (the PreToolUse command firewall)
 engine/     install.sh, systemd/ (Linux units), launchd/ (macOS plist templates), tests/ (safety test suite)
 defaults/   generic config — FARM.md, farm.env, protected-paths.txt, prompts/
 templates/  per-project scaffolds — task/bug templates, project-prompts/, protected-paths
-skills/     the agent-farm:* skills
+skills/     the software-factory:* skills
 contract/   what `farmctl conduct` reads and writes, with fixtures
 ```
 

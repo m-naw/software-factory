@@ -22,7 +22,7 @@ This skill exists because of two real, repeatable failures:
 
 **When NOT to use:**
 
-- A task with **no PR yet** (use `agent-farm:task-authoring` / `agent-farm:task-new`).
+- A task with **no PR yet** (use `software-factory:task-authoring` / `software-factory:task-new`).
 - A **`decompose`- or `capstone`-tagged** task (these are PR-less review tasks handled by qa.md's short-circuits — bouncing them to `ready` ping-pongs forever).
 - A genuine **decision/escalation** → `escalated` WITH a reason, do not bounce to `ready`.
 - Changes QA can **fix in place**.
